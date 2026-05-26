@@ -1,0 +1,38 @@
+services:
+  # Backend API Service
+  - type: web
+    name: hoca-backend
+    runtime: node
+    region: singapore # Change to your preferred region
+    plan: free # Options: free, starter, standard, pro
+    branch: main # Git branch to deploy
+    buildCommand: npm ci # Faster and more reliable than npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGODB_URI
+        sync: false # Set manually in Render dashboard
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: CLIENT_URL
+        value: https://hoca.asia
+    autoDeploy: true
+
