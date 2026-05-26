@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+HOCA-BE/node_modules/
+hoca-fe/node_modules/
+
+# Environment variables
+.env
+HOCA-BE/.env
+hoca-fe/.env
+
+# Build outputs
+dist/
+build/
+hoca-fe/dist/
+hoca-fe/.vite/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+HOCA-BE/.git/
