@@ -1,5 +1,5 @@
-const roomService = require('../services/room.service');
-const subscriptionService = require('../services/subscription.service');
+const roomService = require("../services/room.service");
+const subscriptionService = require("../services/subscription.service");
 
 const createRoom = async (req, reply) => {
   try {
@@ -15,7 +15,7 @@ const getRooms = async (req, reply) => {
     const { search } = req.query;
     const query = {};
     if (search) {
-      query.name = { $regex: search, $options: 'i' };
+      query.name = { $regex: search, $options: "i" };
     }
     const rooms = await roomService.getPublicRooms(query);
     reply.send(rooms);
@@ -45,7 +45,11 @@ const getMyRooms = async (req, reply) => {
 const joinRoom = async (req, reply) => {
   try {
     const { password } = req.body || {};
-    const result = await roomService.joinRoom(req.params.id, req.user.id, password);
+    const result = await roomService.joinRoom(
+      req.params.id,
+      req.user.id,
+      password,
+    );
     reply.send(result);
   } catch (error) {
     reply.code(400).send({ message: error.message });
@@ -55,7 +59,7 @@ const joinRoom = async (req, reply) => {
 const leaveRoom = async (req, reply) => {
   try {
     await roomService.leaveRoom(req.params.id, req.user.id);
-    reply.send({ message: 'Left successfully' });
+    reply.send({ message: "Left successfully" });
   } catch (error) {
     reply.code(400).send({ message: error.message });
   }
@@ -66,26 +70,28 @@ const leaveRoom = async (req, reply) => {
  */
 const closeRoom = async (req, reply) => {
   try {
-    const Room = require('../models/Room');
+    const Room = require("../models/Room");
     const room = await Room.findById(req.params.id);
 
     if (!room) {
-      return reply.code(404).send({ message: 'Room not found' });
+      return reply.code(404).send({ message: "Room not found" });
     }
 
     // Check ownership
-    if (room.owner?.toString() !== req.user.id && req.user.role !== 'ADMIN') {
-      return reply.code(403).send({ message: 'Only room owner can close the room' });
+    if (room.owner?.toString() !== req.user.id && req.user.role !== "ADMIN") {
+      return reply
+        .code(403)
+        .send({ message: "Only room owner can close the room" });
     }
 
-    const result = await roomService.closeRoom(req.params.id, 'manual');
+    const result = await roomService.closeRoom(req.params.id, "manual");
 
     // Notify participants via socket if available
     if (global.io) {
-      global.io.to(req.params.id).emit('room-closed', {
+      global.io.to(req.params.id).emit("room-closed", {
         roomId: req.params.id,
-        reason: 'manual',
-        message: 'Phòng đã được đóng bởi chủ phòng.'
+        reason: "manual",
+        message: "Phòng đã được đóng bởi chủ phòng.",
       });
     }
 
@@ -101,16 +107,20 @@ const closeRoom = async (req, reply) => {
  */
 const checkJoinEligibility = async (req, reply) => {
   try {
-    const User = require('../models/User');
+    const User = require("../models/User");
 
     const user = await User.findById(req.user.id);
     if (!user) {
-      return reply.code(404).send({ canJoin: false, message: 'User not found' });
+      return reply
+        .code(404)
+        .send({ canJoin: false, message: "User not found" });
     }
 
     // Use subscription service for eligibility check
     const eligibility = subscriptionService.checkJoinRoomEligibility(user);
-    const tierLimits = subscriptionService.getTierLimits(subscriptionService.getEffectiveTier(user));
+    const tierLimits = subscriptionService.getTierLimits(
+      subscriptionService.getEffectiveTier(user),
+    );
 
     if (!eligibility.canJoin) {
       return reply.send({
@@ -118,7 +128,7 @@ const checkJoinEligibility = async (req, reply) => {
         message: eligibility.reason,
         usedMinutes: user.todayRoomMinutes || 0,
         limitMinutes: tierLimits.dailyStudyMinutes,
-        remainingMinutes: 0
+        remainingMinutes: 0,
       });
     }
 
@@ -126,7 +136,7 @@ const checkJoinEligibility = async (req, reply) => {
       canJoin: true,
       usedMinutes: user.todayRoomMinutes || 0,
       limitMinutes: tierLimits.dailyStudyMinutes,
-      remainingMinutes: eligibility.remainingMinutes
+      remainingMinutes: eligibility.remainingMinutes,
     });
   } catch (error) {
     reply.code(500).send({ canJoin: false, message: error.message });
@@ -138,15 +148,19 @@ const checkJoinEligibility = async (req, reply) => {
  */
 const checkCreateEligibility = async (req, reply) => {
   try {
-    const User = require('../models/User');
+    const User = require("../models/User");
 
     const user = await User.findById(req.user.id);
     if (!user) {
-      return reply.code(404).send({ canCreate: false, message: 'User not found' });
+      return reply
+        .code(404)
+        .send({ canCreate: false, message: "User not found" });
     }
 
     const eligibility = subscriptionService.checkRoomCreationEligibility(user);
-    const tierLimits = subscriptionService.getTierLimits(subscriptionService.getEffectiveTier(user));
+    const tierLimits = subscriptionService.getTierLimits(
+      subscriptionService.getEffectiveTier(user),
+    );
 
     reply.send({
       canCreate: eligibility.canCreate,
@@ -155,7 +169,7 @@ const checkCreateEligibility = async (req, reply) => {
       roomsPerDay: tierLimits.roomsPerDay,
       roomDurationMinutes: tierLimits.roomDurationMinutes,
       requiresSequentialRooms: tierLimits.requireSequentialRooms,
-      hasActiveRoom: !!user.activePersonalRoomId
+      hasActiveRoom: !!user.activePersonalRoomId,
     });
   } catch (error) {
     reply.code(500).send({ canCreate: false, message: error.message });
@@ -167,8 +181,8 @@ const checkCreateEligibility = async (req, reply) => {
  */
 const getCategories = async (req, reply) => {
   try {
-    const RoomCategory = require('../models/RoomCategory');
-    const categories = await RoomCategory.find().sort('name');
+    const RoomCategory = require("../models/RoomCategory");
+    const categories = await RoomCategory.find().sort("name");
     reply.send(categories);
   } catch (error) {
     reply.code(500).send({ message: error.message });
@@ -181,14 +195,14 @@ const getCategories = async (req, reply) => {
  */
 const checkMicPermission = async (req, reply) => {
   try {
-    const Room = require('../models/Room');
-    const User = require('../models/User');
+    const Room = require("../models/Room");
+    const User = require("../models/User");
 
     const room = await Room.findById(req.params.id);
     if (!room) {
       return reply.code(404).send({
         canUseMic: false,
-        message: 'Room not found'
+        message: "Room not found",
       });
     }
 
@@ -196,7 +210,7 @@ const checkMicPermission = async (req, reply) => {
     if (!user) {
       return reply.code(404).send({
         canUseMic: false,
-        message: 'User not found'
+        message: "User not found",
       });
     }
 
@@ -208,7 +222,7 @@ const checkMicPermission = async (req, reply) => {
       showUpgrade: permission.showUpgrade || false,
       hideMicIcon: permission.hideMicIcon || false,
       roomType: room.roomType,
-      userTier: subscriptionService.getEffectiveTier(user)
+      userTier: subscriptionService.getEffectiveTier(user),
     });
   } catch (error) {
     reply.code(500).send({ canUseMic: false, message: error.message });
@@ -220,54 +234,93 @@ const checkMicPermission = async (req, reply) => {
  */
 const getAvailableRoomTypes = async (req, reply) => {
   try {
-    const User = require('../models/User');
+    const User = require("../models/User");
     const user = await User.findById(req.user.id);
 
     if (!user) {
-      return reply.code(404).send({ message: 'User not found' });
+      return reply.code(404).send({ message: "User not found" });
     }
 
     const tier = subscriptionService.getEffectiveTier(user);
-    const isAdmin = user.role === 'ADMIN';
+    const isAdmin = user.role === "ADMIN";
 
     // FREE users can only create SILENT rooms
     // HOCA+ and ADMIN can create both
     const availableTypes = [];
 
     availableTypes.push({
-      type: 'SILENT',
-      name: 'Phòng Im lặng',
-      description: 'Không ai được dùng mic. Tập trung học tập tuyệt đối.',
-      icon: '🔇',
-      available: true
+      type: "SILENT",
+      name: "Phòng Im lặng",
+      description: "Không ai được dùng mic. Tập trung học tập tuyệt đối.",
+      icon: "🔇",
+      available: true,
     });
 
-    if (tier !== 'FREE' || isAdmin) {
+    if (tier !== "FREE" || isAdmin) {
       availableTypes.push({
-        type: 'DISCUSSION',
-        name: 'Phòng Thảo luận',
-        description: 'HOCA+ có thể dùng mic để thảo luận.',
-        icon: '🎤',
-        available: true
+        type: "DISCUSSION",
+        name: "Phòng Thảo luận",
+        description: "HOCA+ có thể dùng mic để thảo luận.",
+        icon: "🎤",
+        available: true,
       });
     } else {
       availableTypes.push({
-        type: 'DISCUSSION',
-        name: 'Phòng Thảo luận',
-        description: 'Nâng cấp HOCA+ để tạo phòng có mic!',
-        icon: '🔒',
+        type: "DISCUSSION",
+        name: "Phòng Thảo luận",
+        description: "Nâng cấp HOCA+ để tạo phòng có mic!",
+        icon: "🔒",
         available: false,
-        requiresUpgrade: true
+        requiresUpgrade: true,
       });
     }
 
     reply.send({
       tier,
       isAdmin,
-      roomTypes: availableTypes
+      roomTypes: availableTypes,
     });
   } catch (error) {
     reply.code(500).send({ message: error.message });
+  }
+};
+
+/**
+ * Delete room - only owner or admin can delete
+ */
+const deleteRoom = async (req, reply) => {
+  try {
+    const Room = require("../models/Room");
+    const room = await Room.findById(req.params.id);
+
+    if (!room) {
+      return reply.code(404).send({ message: "Room not found" });
+    }
+
+    // Check ownership or admin
+    const isOwner = room.owner?.toString() === req.user.id;
+    const isAdmin = req.user.role === "ADMIN";
+
+    if (!isOwner && !isAdmin) {
+      return reply
+        .code(403)
+        .send({ message: "Only room owner or admin can delete the room" });
+    }
+
+    // Notify participants via socket if available
+    if (global.io) {
+      global.io.to(req.params.id).emit("room-deleted", {
+        roomId: req.params.id,
+        message: "Phòng đã bị xóa bởi chủ phòng.",
+      });
+    }
+
+    // Delete the room
+    await Room.findByIdAndDelete(req.params.id);
+
+    reply.send({ message: "Room deleted successfully" });
+  } catch (error) {
+    reply.code(400).send({ message: error.message });
   }
 };
 
@@ -278,10 +331,11 @@ module.exports = {
   joinRoom,
   leaveRoom,
   closeRoom,
+  deleteRoom,
   checkJoinEligibility,
   checkCreateEligibility,
   checkMicPermission,
   getAvailableRoomTypes,
   getCategories,
-  getMyRooms
+  getMyRooms,
 };

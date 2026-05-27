@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "seed": "node src/seed.js"
+    "seed": "node src/seed.js",
+    "seed:rooms": "node seedRooms.js",
+    "seed:badges": "node seedBadges.js",
+    "reset:rooms": "node resetUserRoomStatus.js",
+    "close:rooms": "node closeAllFreeUserRooms.js"
   },
   "keywords": [],
   "author": "",
