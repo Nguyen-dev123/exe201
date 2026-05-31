@@ -1,46 +1,50 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
-const roomSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  category: { type: mongoose.Schema.Types.ObjectId, ref: 'RoomCategory' },
-  owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // null if admin room
+const roomSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true },
+    category: { type: mongoose.Schema.Types.ObjectId, ref: "RoomCategory" },
+    owner: { type: mongoose.Schema.Types.ObjectId, ref: "User" }, // null if admin room
 
-  // Privacy
-  isPublic: { type: Boolean, default: true },
-  password: { type: String, select: false },
+    // Privacy
+    isPublic: { type: Boolean, default: true },
+    password: { type: String, select: false },
 
-  // Settings
-  maxParticipants: { type: Number, default: 30 },
+    // Settings
+    maxParticipants: { type: Number, default: 30 },
 
-  // Room Type for Mic Control
-  // SILENT: No one can use mic (absolute silence)
-  // DISCUSSION: HOCA+ can use mic, FREE users can only listen
-  roomType: {
-    type: String,
-    enum: ['SILENT', 'DISCUSSION'],
-    default: 'SILENT'
+    // Room Type for Mic Control
+    // SILENT: No one can use mic (absolute silence)
+    // DISCUSSION: HOCA+ can use mic, FREE users can only listen
+    // VIDEO: Camera + mic room, everyone can turn cam/mic on freely (no restriction)
+    roomType: {
+      type: String,
+      enum: ["SILENT", "DISCUSSION", "VIDEO"],
+      default: "SILENT",
+    },
+
+    timerMode: {
+      type: String,
+      enum: ["POMODORO_25_5", "POMODORO_45_5", "POMODORO_50_10", "COUNT_UP"],
+      default: "POMODORO_25_5",
+    },
+
+    // Status
+    isActive: { type: Boolean, default: true },
+    closedAt: Date,
+    isAdminRoom: { type: Boolean, default: false },
+
+    // Auto-close for FREE tier rooms
+    autoCloseAt: { type: Date }, // When room should auto-close (for FREE tier: 60 min after creation)
+    ownerTierAtCreation: { type: String }, // Track owner's tier when room was created
+
+    // Active Participants (for checking limit < 50)
+    activeParticipants: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
   },
-
-  timerMode: {
-    type: String,
-    enum: ['POMODORO_25_5', 'POMODORO_45_5', 'POMODORO_50_10', 'COUNT_UP'],
-    default: 'POMODORO_25_5'
-  },
-
-  // Status
-  isActive: { type: Boolean, default: true },
-  closedAt: Date,
-  isAdminRoom: { type: Boolean, default: false },
-
-  // Auto-close for FREE tier rooms
-  autoCloseAt: { type: Date }, // When room should auto-close (for FREE tier: 60 min after creation)
-  ownerTierAtCreation: { type: String }, // Track owner's tier when room was created
-
-  // Active Participants (for checking limit < 50)
-  activeParticipants: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
-}, { timestamps: true });
+  { timestamps: true },
+);
 
 // Index for getting public rooms
 roomSchema.index({ isPublic: 1, isActive: 1 });
 
-module.exports = mongoose.model('Room', roomSchema);
+module.exports = mongoose.model("Room", roomSchema);

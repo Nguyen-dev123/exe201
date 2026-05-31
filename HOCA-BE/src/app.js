@@ -32,13 +32,31 @@ const buildApp = async () => {
     origin: (origin, cb) => {
       const allowedOrigins = [
         "http://localhost:3000",
+        "http://localhost:3001",
         "https://hoca.asia",
         "https://www.hoca.asia",
         "https://hoca-six.vercel.app",
         CLIENT_URL,
       ];
 
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow requests with no origin (mobile apps, curl)
+      if (!origin) return cb(null, true);
+
+      // Allow any local network origin (LAN IPs) so phones on the same WiFi can connect.
+      // Matches http(s)://localhost, 127.x, 10.x, 192.168.x, 172.16-31.x on any port.
+      const isLanOrigin =
+        /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(
+          origin,
+        );
+
+      // Allow public tunnel domains (Cloudflare quick tunnels, ngrok, localtunnel)
+      // and Vercel deployments (production + preview)
+      const isTunnelOrigin =
+        /\.(trycloudflare\.com|ngrok\.io|ngrok-free\.app|loca\.lt|vercel\.app)$/.test(
+          origin,
+        );
+
+      if (allowedOrigins.includes(origin) || isLanOrigin || isTunnelOrigin) {
         cb(null, true);
       } else {
         cb(new Error("Not allowed by CORS"), false);

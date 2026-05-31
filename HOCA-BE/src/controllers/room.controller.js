@@ -256,6 +256,16 @@ const getAvailableRoomTypes = async (req, reply) => {
       available: true,
     });
 
+    // VIDEO room - open to everyone, free cam/mic
+    availableTypes.push({
+      type: "VIDEO",
+      name: "Phòng Camera",
+      description:
+        "Học cùng webcam. Ai muốn bật cam/mic thì bật, không giới hạn.",
+      icon: "📹",
+      available: true,
+    });
+
     if (tier !== "FREE" || isAdmin) {
       availableTypes.push({
         type: "DISCUSSION",

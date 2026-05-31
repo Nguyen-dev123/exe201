@@ -1,11 +1,27 @@
 import { useState, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import api from "../lib/api";
 import { initSocket, getSocket } from "../lib/socket";
 import { useAuthStore } from "../store/authStore";
-import { Send, Users, LogOut, MessageCircle, XCircle } from "lucide-react";
+import {
+  Send,
+  Users,
+  LogOut,
+  MessageCircle,
+  XCircle,
+  Lock,
+  Clock,
+  Crown,
+  Flag,
+  Smile,
+} from "lucide-react";
+import PomodoroTimer from "../components/PomodoroTimer";
+import VideoRoom from "../components/VideoRoom";
+import ReportModal from "../components/ReportModal";
+import FeedbackModal from "../components/FeedbackModal";
+import StickerPicker from "../components/StickerPicker";
 
 export default function RoomDetailPage() {
   const { id } = useParams();
@@ -15,6 +31,11 @@ export default function RoomDetailPage() {
   const [newMessage, setNewMessage] = useState("");
   const [leaving, setLeaving] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState([]);
+  const [canChat, setCanChat] = useState(false);
+  const [sessionInfo, setSessionInfo] = useState(null); // FREE tier remaining time
+  const [reportTarget, setReportTarget] = useState(null);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [showStickers, setShowStickers] = useState(false);
   const messagesEndRef = useRef(null);
 
   const { data: room, isLoading } = useQuery({
@@ -25,59 +46,81 @@ export default function RoomDetailPage() {
     },
   });
 
+  const isPremium = user?.subscriptionTier && user.subscriptionTier !== "FREE";
+  const isAdmin = user?.role === "ADMIN";
+
+  useEffect(() => {
+    setCanChat(isPremium || isAdmin);
+  }, [isPremium, isAdmin]);
+
   useEffect(() => {
     if (!token) return;
 
     const socket = initSocket(token);
-
-    // Emit join-room with correct format
     socket.emit("join-room", { roomId: id });
 
-    socket.on("new-message", (message) => {
+    const onChat = (message) => {
       setMessages((prev) => [...prev, message]);
-    });
-
-    socket.on("user-joined", (data) => {
-      toast.success(`${data.userName} đã tham gia phòng`);
-      // Update online users
-      setOnlineUsers((prev) => {
-        if (!prev.find((u) => u.userId === data.userId)) {
-          return [...prev, { userId: data.userId, userName: data.userName }];
-        }
-        return prev;
-      });
-    });
-
-    socket.on("user-left", (data) => {
-      toast(`${data.userName} đã rời phòng`);
-      // Remove from online users
+    };
+    const onJoined = (data) => {
+      const name = data.userName || data.userInfo?.displayName;
+      if (name) toast.success(`${name} đã tham gia phòng`);
+    };
+    const onLeft = (data) => {
+      if (data.userName) toast(`${data.userName} đã rời phòng`);
       setOnlineUsers((prev) => prev.filter((u) => u.userId !== data.userId));
-    });
-
-    socket.on("room-users", (users) => {
-      // Update online users list
-      setOnlineUsers(users);
-    });
-
-    socket.on("room-closed", (data) => {
+    };
+    const onUsers = (users) => setOnlineUsers(users);
+    const onClosed = (data) => {
       toast.error(data.message || "Phòng đã bị đóng");
-      setTimeout(() => {
-        navigate("/rooms");
-      }, 2000);
-    });
+      setTimeout(() => navigate("/rooms"), 1500);
+    };
+    const onDeleted = (data) => {
+      toast.error(data.message || "Phòng đã bị xóa");
+      setTimeout(() => navigate("/rooms"), 1500);
+    };
+    const onSessionInfo = (info) => setSessionInfo(info);
+    const onTimeStatus = (s) =>
+      setSessionInfo((prev) => ({
+        ...prev,
+        remainingMinutes: s.remainingMinutes,
+      }));
+    const onSessionWarning = (w) =>
+      toast(w.message, { icon: "⏰", duration: 6000 });
+    const onSessionExpired = (e) => {
+      toast.error(e.message, { duration: 6000 });
+      setTimeout(() => navigate("/pricing"), 2000);
+    };
+    const onChatError = (e) => toast.error(e.message);
+    const onError = (e) => toast.error(e.message || "Có lỗi xảy ra");
 
-    socket.on("error", (error) => {
-      toast.error(error.message || "Có lỗi xảy ra");
-    });
+    socket.on("chat-message", onChat);
+    socket.on("user-joined", onJoined);
+    socket.on("user-left", onLeft);
+    socket.on("room-users", onUsers);
+    socket.on("room-closed", onClosed);
+    socket.on("room-deleted", onDeleted);
+    socket.on("session-info", onSessionInfo);
+    socket.on("time-status", onTimeStatus);
+    socket.on("session-warning", onSessionWarning);
+    socket.on("session-expired", onSessionExpired);
+    socket.on("chat-error", onChatError);
+    socket.on("error", onError);
 
     return () => {
       socket.emit("leave-room", { roomId: id });
-      socket.off("new-message");
-      socket.off("user-joined");
-      socket.off("user-left");
-      socket.off("room-users");
-      socket.off("room-closed");
-      socket.off("error");
+      socket.off("chat-message", onChat);
+      socket.off("user-joined", onJoined);
+      socket.off("user-left", onLeft);
+      socket.off("room-users", onUsers);
+      socket.off("room-closed", onClosed);
+      socket.off("room-deleted", onDeleted);
+      socket.off("session-info", onSessionInfo);
+      socket.off("time-status", onTimeStatus);
+      socket.off("session-warning", onSessionWarning);
+      socket.off("session-expired", onSessionExpired);
+      socket.off("chat-error", onChatError);
+      socket.off("error", onError);
     };
   }, [id, token, navigate]);
 
@@ -88,261 +131,349 @@ export default function RoomDetailPage() {
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (!newMessage.trim()) return;
-
     const socket = getSocket();
     if (socket) {
-      socket.emit("send-message", {
-        roomId: id,
-        message: newMessage,
-      });
+      socket.emit("chat-message", { roomId: id, message: newMessage });
       setNewMessage("");
     }
   };
 
-  const handleLeaveRoom = async () => {
-    if (!confirm("Bạn có chắc muốn rời khỏi phòng học này?")) {
-      return;
-    }
+  const sendSticker = ({ text, stickerUrl }) => {
+    const socket = getSocket();
+    if (!socket) return;
+    // Send emoji as text, or sticker url as message content
+    socket.emit("chat-message", {
+      roomId: id,
+      message: text || stickerUrl,
+      type: stickerUrl ? "STICKER" : "TEXT",
+    });
+  };
 
+  // Open the rating popup first; actual leave happens when it closes.
+  const handleLeaveRoom = () => {
+    setShowFeedback(true);
+  };
+
+  // Called by the feedback modal (after submit or skip)
+  const finishLeave = async () => {
+    setShowFeedback(false);
     setLeaving(true);
     try {
       await api.post(`/api/rooms/${id}/leave`);
-      toast.success("Đã rời phòng thành công!");
-      navigate("/rooms");
-    } catch (error) {
-      toast.error(error.response?.data?.message || "Không thể rời phòng");
+    } catch {
+      /* ignore - still navigate away */
     } finally {
-      setLeaving(false);
+      navigate("/rooms");
     }
   };
 
   const handleCloseRoom = async () => {
-    if (
-      !confirm(
-        "Bạn có chắc muốn đóng phòng này? Tất cả người dùng sẽ bị đá ra.",
-      )
-    ) {
-      return;
-    }
-
+    if (!confirm("Đóng phòng này? Tất cả người dùng sẽ bị đá ra.")) return;
     try {
       await api.post(`/api/rooms/${id}/close`);
-      toast.success("Đã đóng phòng thành công!");
+      toast.success("Đã đóng phòng!");
       navigate("/rooms");
     } catch (error) {
       toast.error(error.response?.data?.message || "Không thể đóng phòng");
     }
   };
 
+  const isOwnerOrAdmin =
+    room?.owner?._id === user?._id || room?.owner === user?._id || isAdmin;
+
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="flex items-center justify-center min-h-[70vh]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        {/* Room Header */}
-        <div className="bg-gradient-to-r from-blue-500 to-purple-600 text-white p-6">
-          <div className="flex justify-between items-start">
-            <div className="flex-1">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 text-white">
+      {/* Room Header */}
+      <div className="stat-card mb-6">
+        <div className="flex flex-col md:flex-row justify-between gap-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-1">
               <h1 className="text-2xl font-bold">{room?.name}</h1>
-              <p className="mt-2 opacity-90">{room?.description}</p>
-              <div className="mt-4 flex items-center space-x-4">
-                <div className="flex items-center space-x-2">
-                  <Users size={20} />
-                  <span>{onlineUsers.length} người đang online</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                  <span className="text-sm">Đang hoạt động</span>
-                </div>
-              </div>
+              <span className="pill bg-dark-lighter text-white/60">
+                {room?.roomType === "VIDEO"
+                  ? "📹 Camera"
+                  : room?.roomType === "DISCUSSION"
+                    ? "🎤 Thảo luận"
+                    : "🔇 Im lặng"}
+              </span>
             </div>
-            <div className="flex items-center space-x-2">
-              {/* Close Room button - only for owner or admin */}
-              {(room?.owner?._id === user?._id ||
-                room?.owner === user?._id ||
-                user?.role === "ADMIN") && (
-                <button
-                  onClick={handleCloseRoom}
-                  className="flex items-center space-x-2 px-4 py-2 bg-red-500/80 hover:bg-red-600 rounded-lg transition"
-                  title="Đóng phòng"
-                >
-                  <XCircle size={20} />
-                  <span>Đóng phòng</span>
-                </button>
+            <p className="text-white/50">
+              {room?.description || "Không có mô tả"}
+            </p>
+            <div className="mt-3 flex items-center gap-4 text-sm">
+              <span className="flex items-center gap-1.5 text-white/60">
+                <Users size={16} /> {onlineUsers.length} online
+              </span>
+              <span className="flex items-center gap-1.5 text-green-400">
+                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                Đang hoạt động
+              </span>
+              {sessionInfo && !isPremium && (
+                <span className="flex items-center gap-1.5 text-orange-400">
+                  <Clock size={16} /> Còn {sessionInfo.remainingMinutes ?? "—"}{" "}
+                  phút
+                </span>
               )}
-              <button
-                onClick={handleLeaveRoom}
-                disabled={leaving}
-                className="flex items-center space-x-2 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition disabled:opacity-50"
-                title="Rời phòng"
-              >
-                <LogOut size={20} />
-                <span>{leaving ? "Đang rời..." : "Rời phòng"}</span>
-              </button>
             </div>
           </div>
+          <div className="flex items-start gap-2">
+            {isOwnerOrAdmin && (
+              <button
+                onClick={handleCloseRoom}
+                className="flex items-center gap-2 px-4 py-2 bg-red-500/15 text-red-400 hover:bg-red-500/25 rounded-lg transition"
+              >
+                <XCircle size={18} /> Đóng phòng
+              </button>
+            )}
+            <button
+              onClick={handleLeaveRoom}
+              disabled={leaving}
+              className="flex items-center gap-2 px-4 py-2 bg-dark-lighter hover:bg-dark rounded-lg transition disabled:opacity-50"
+            >
+              <LogOut size={18} /> {leaving ? "Đang rời..." : "Rời phòng"}
+            </button>
+          </div>
         </div>
+      </div>
 
-        <div className="grid md:grid-cols-4 gap-6 p-6">
-          {/* Chat Area */}
-          <div className="md:col-span-3">
-            <div className="border rounded-lg flex flex-col h-[600px] bg-white shadow-sm">
-              {/* Chat Header */}
-              <div className="border-b px-4 py-3 bg-gray-50">
-                <h3 className="font-semibold text-gray-900 flex items-center">
-                  <MessageCircle size={20} className="mr-2 text-blue-600" />
-                  Chat phòng học
-                </h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  Trò chuyện với {onlineUsers.length} người đang online
-                </p>
-              </div>
+      {/* Video grid for VIDEO rooms */}
+      {room?.roomType === "VIDEO" && (
+        <div className="mb-6">
+          <VideoRoom
+            socket={getSocket()}
+            roomId={id}
+            user={user}
+            onlineUsers={onlineUsers}
+          />
+        </div>
+      )}
 
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-                {messages.length === 0 ? (
-                  <div className="text-center text-gray-400 mt-20">
-                    <MessageCircle className="mx-auto h-16 w-16 mb-3 opacity-30" />
-                    <p className="text-lg font-medium">Chưa có tin nhắn nào</p>
-                    <p className="text-sm mt-2">Hãy bắt đầu cuộc trò chuyện!</p>
-                  </div>
-                ) : (
-                  messages.map((msg, index) => {
-                    const isMyMessage = msg.userId === user?._id;
+      <div className="grid lg:grid-cols-4 gap-6">
+        {/* Chat */}
+        <div className="lg:col-span-3">
+          <div className="stat-card flex flex-col h-[600px] p-0 overflow-hidden">
+            <div className="border-b border-white/10 px-4 py-3">
+              <h3 className="font-semibold flex items-center gap-2">
+                <MessageCircle size={18} className="text-primary" />
+                Chat phòng học
+              </h3>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {messages.length === 0 ? (
+                <div className="text-center text-white/30 mt-24">
+                  <MessageCircle className="mx-auto h-14 w-14 mb-3 opacity-30" />
+                  <p>Chưa có tin nhắn nào</p>
+                </div>
+              ) : (
+                messages.map((msg, index) => {
+                  const isMine = msg.userId === user?._id;
+                  const isSystem =
+                    msg.userId === "system" || msg.type === "SYSTEM";
+                  const isBot = msg.userId === "HOCA_AI_BOT";
+                  if (isSystem) {
                     return (
-                      <div
-                        key={index}
-                        className={`flex ${isMyMessage ? "justify-end" : "justify-start"} animate-fadeIn`}
-                      >
-                        <div
-                          className={`flex ${isMyMessage ? "flex-row-reverse" : "flex-row"} items-end space-x-2 max-w-[70%]`}
-                        >
-                          {/* Avatar */}
-                          {!isMyMessage && (
-                            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
-                              {msg.userName?.[0]?.toUpperCase() || "U"}
-                            </div>
-                          )}
-
-                          {/* Message Bubble */}
-                          <div
-                            className={`flex flex-col ${isMyMessage ? "items-end" : "items-start"}`}
-                          >
-                            {!isMyMessage && (
-                              <p className="text-xs font-semibold text-gray-700 mb-1 px-1">
-                                {msg.userName}
-                              </p>
-                            )}
-                            <div
-                              className={`px-4 py-2 rounded-2xl ${
-                                isMyMessage
-                                  ? "bg-blue-600 text-white rounded-br-sm"
-                                  : "bg-white text-gray-900 border border-gray-200 rounded-bl-sm"
-                              } shadow-sm`}
-                            >
-                              <p className="break-words">{msg.message}</p>
-                            </div>
-                            <p
-                              className={`text-xs mt-1 px-1 ${isMyMessage ? "text-gray-500" : "text-gray-400"}`}
-                            >
-                              {new Date(msg.timestamp).toLocaleTimeString(
-                                "vi-VN",
-                                {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                },
-                              )}
-                            </p>
-                          </div>
-                        </div>
+                      <div key={index} className="text-center">
+                        <span className="text-xs text-white/40 bg-dark-lighter px-3 py-1 rounded-full">
+                          {msg.message}
+                        </span>
                       </div>
                     );
-                  })
-                )}
-                <div ref={messagesEndRef} />
-              </div>
+                  }
+                  return (
+                    <div
+                      key={index}
+                      className={`flex ${isMine ? "justify-end" : "justify-start"}`}
+                    >
+                      <div
+                        className={`flex ${isMine ? "flex-row-reverse" : ""} items-end gap-2 max-w-[75%]`}
+                      >
+                        {!isMine && (
+                          <div
+                            className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0 ${
+                              isBot
+                                ? "bg-gradient-to-br from-primary to-orange-600"
+                                : "bg-dark-lighter"
+                            }`}
+                          >
+                            {isBot
+                              ? "AI"
+                              : msg.displayName?.[0]?.toUpperCase() || "U"}
+                          </div>
+                        )}
+                        <div className={isMine ? "items-end" : ""}>
+                          {!isMine && (
+                            <p className="text-xs font-medium text-white/60 mb-1">
+                              {msg.displayName}
+                            </p>
+                          )}
+                          {msg.type === "STICKER" &&
+                          /^https?:\/\//.test(
+                            msg.message || msg.content || "",
+                          ) ? (
+                            <img
+                              src={msg.message || msg.content}
+                              alt="sticker"
+                              className="w-28 h-28 object-contain"
+                            />
+                          ) : (
+                            <div
+                              className={`px-4 py-2 rounded-2xl ${
+                                isMine
+                                  ? "bg-primary text-white rounded-br-sm"
+                                  : "bg-dark-lighter text-white/90 rounded-bl-sm"
+                              }`}
+                            >
+                              <p className="break-words whitespace-pre-wrap">
+                                {msg.message || msg.content}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
 
-              {/* Message Input */}
+            {/* Input / upgrade prompt */}
+            {canChat ? (
               <form
                 onSubmit={handleSendMessage}
-                className="border-t p-4 bg-white"
+                className="border-t border-white/10 p-4 relative"
               >
-                <div className="flex space-x-2">
+                {showStickers && (
+                  <StickerPicker
+                    onPick={sendSticker}
+                    onClose={() => setShowStickers(false)}
+                  />
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowStickers((s) => !s)}
+                    className="px-3 bg-dark-lighter hover:bg-dark rounded-lg flex items-center transition text-white/70"
+                    title="Sticker / Emoji"
+                  >
+                    <Smile size={20} />
+                  </button>
                   <input
-                    type="text"
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
-                    placeholder="Nhập tin nhắn..."
-                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                    placeholder="Nhập tin nhắn... (gõ @HOCA AI để hỏi trợ lý)"
+                    className="flex-1 app-input"
                   />
                   <button
                     type="submit"
                     disabled={!newMessage.trim()}
-                    className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 transition"
+                    className="px-5 bg-primary hover:bg-primary-dark rounded-lg disabled:opacity-50 flex items-center transition"
                   >
-                    <Send size={20} />
-                    <span className="hidden sm:inline">Gửi</span>
+                    <Send size={18} />
                   </button>
                 </div>
               </form>
+            ) : (
+              <div className="border-t border-white/10 p-4">
+                <Link
+                  to="/pricing"
+                  className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition text-sm font-medium"
+                >
+                  <Lock size={16} /> Chat chỉ dành cho HOCA+ — Nâng cấp ngay
+                </Link>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Sidebar */}
+        <div className="space-y-6">
+          {/* Pomodoro */}
+          <div className="stat-card">
+            <h3 className="font-semibold mb-2 text-center">⏱ Pomodoro</h3>
+            <PomodoroTimer socket={getSocket()} />
+          </div>
+
+          {/* Members */}
+          <div className="stat-card">
+            <h3 className="font-semibold mb-4 flex items-center justify-between">
+              <span>Thành viên</span>
+              <span className="text-sm font-normal text-white/40">
+                {onlineUsers.length} online
+              </span>
+            </h3>
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {onlineUsers.length === 0 ? (
+                <p className="text-center text-white/30 text-sm py-6">
+                  Chưa có ai online
+                </p>
+              ) : (
+                onlineUsers.map((member) => (
+                  <div
+                    key={member.userId}
+                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-dark-lighter transition group"
+                  >
+                    <div className="relative">
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-orange-600 flex items-center justify-center text-white text-sm font-semibold">
+                        {member.userName?.[0]?.toUpperCase() || "U"}
+                      </div>
+                      <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-dark-card rounded-full" />
+                    </div>
+                    <span className="text-sm truncate flex-1">
+                      {member.userName}
+                      {member.userId === user?._id && (
+                        <span className="text-primary text-xs ml-1">(Bạn)</span>
+                      )}
+                    </span>
+                    {member.userId !== user?._id && (
+                      <button
+                        onClick={() => setReportTarget(member)}
+                        className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 transition"
+                        title="Báo cáo"
+                      >
+                        <Flag size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
-          {/* Members Sidebar */}
-          <div className="md:col-span-1">
-            <div className="border rounded-lg p-4 bg-white">
-              <h3 className="font-semibold text-lg mb-4 flex items-center justify-between">
-                <span>Thành viên</span>
-                <span className="text-sm font-normal text-gray-500">
-                  {onlineUsers.length} online
-                </span>
-              </h3>
-              <div className="space-y-3 max-h-[540px] overflow-y-auto">
-                {onlineUsers.length === 0 ? (
-                  <div className="text-center text-gray-400 py-8">
-                    <Users className="mx-auto h-12 w-12 mb-2 opacity-50" />
-                    <p className="text-sm">Chưa có ai online</p>
-                  </div>
-                ) : (
-                  onlineUsers.map((member) => (
-                    <div
-                      key={member.userId}
-                      className="flex items-center space-x-3 p-2 rounded-lg hover:bg-gray-50 transition"
-                    >
-                      <div className="relative">
-                        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold">
-                          {member.userName?.[0]?.toUpperCase() || "U"}
-                        </div>
-                        <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm truncate">
-                          {member.userName}
-                          {member.userId === user?._id && (
-                            <span className="ml-1 text-xs text-blue-600">
-                              (Bạn)
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-green-600 flex items-center">
-                          <span className="w-1.5 h-1.5 bg-green-500 rounded-full mr-1 animate-pulse"></span>
-                          Đang online
-                        </p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
+          {!isPremium && (
+            <Link
+              to="/pricing"
+              className="block stat-card text-center hover:border-primary/40 transition"
+            >
+              <Crown className="mx-auto text-primary mb-2" size={24} />
+              <p className="text-sm font-medium">Nâng cấp HOCA+</p>
+              <p className="text-xs text-white/40 mt-1">
+                Học không giới hạn, mic & chat
+              </p>
+            </Link>
+          )}
         </div>
       </div>
+
+      {reportTarget && (
+        <ReportModal
+          targetUser={reportTarget}
+          roomId={id}
+          onClose={() => setReportTarget(null)}
+        />
+      )}
+      {showFeedback && (
+        <FeedbackModal roomId={id} onClose={finishLeave} onDone={finishLeave} />
+      )}
     </div>
   );
 }

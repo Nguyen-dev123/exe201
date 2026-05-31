@@ -26,7 +26,7 @@ export default function LoginPage() {
       const { user, token, refreshToken } = response.data;
       setAuth(user, token, refreshToken);
       toast.success("Đăng nhập thành công!");
-      navigate("/rooms");
+      navigate("/dashboard");
     } catch (error) {
       toast.error(error.response?.data?.message || "Đăng nhập thất bại");
     } finally {
@@ -43,7 +43,7 @@ export default function LoginPage() {
       const { user, token, refreshToken } = response.data;
       setAuth(user, token, refreshToken);
       toast.success("Đăng nhập Google thành công!");
-      navigate("/rooms");
+      navigate("/dashboard");
     } catch (error) {
       toast.error(error.response?.data?.message || "Đăng nhập Google thất bại");
     } finally {
@@ -177,12 +177,12 @@ export default function LoginPage() {
                 <label className="block text-sm font-medium text-white">
                   Mật khẩu
                 </label>
-                <button
-                  type="button"
+                <Link
+                  to="/forgot-password"
                   className="text-sm text-primary hover:text-primary-light transition"
                 >
                   Quên mật khẩu?
-                </button>
+                </Link>
               </div>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">

@@ -36,7 +36,7 @@ export default function RegisterPage() {
         const { user, token, refreshToken } = response.data;
         setAuth(user, token, refreshToken);
         toast.success("Đăng ký thành công!");
-        navigate("/rooms");
+        navigate("/dashboard");
       } else {
         // Old flow: requires email verification
         toast.success(
@@ -60,7 +60,7 @@ export default function RegisterPage() {
       const { user, token, refreshToken } = response.data;
       setAuth(user, token, refreshToken);
       toast.success("Đăng ký Google thành công!");
-      navigate("/rooms");
+      navigate("/dashboard");
     } catch (error) {
       toast.error(error.response?.data?.message || "Đăng ký Google thất bại");
     } finally {

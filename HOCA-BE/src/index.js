@@ -37,7 +37,22 @@ const startServer = async () => {
         origin: (origin, callback) => {
           // Allow requests with no origin (like mobile apps or curl)
           if (!origin) return callback(null, true);
-          if (allowedOrigins.includes(origin)) {
+          const staticAllowed = [
+            "http://localhost:3000",
+            "http://localhost:3001",
+            "https://hoca.asia",
+            "https://www.hoca.asia",
+            CLIENT_URL,
+          ].filter(Boolean);
+          const isLanOrigin =
+            /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(
+              origin,
+            );
+          const isTunnelOrigin =
+            /\.(trycloudflare\.com|ngrok\.io|ngrok-free\.app|loca\.lt|vercel\.app)$/.test(
+              origin,
+            );
+          if (staticAllowed.includes(origin) || isLanOrigin || isTunnelOrigin) {
             return callback(null, true);
           }
           return callback(new Error("Not allowed by CORS"), false);

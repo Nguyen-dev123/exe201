@@ -303,6 +303,11 @@ const checkMicPermission = (user, room) => {
     };
   }
 
+  // VIDEO rooms - everyone can use mic & camera freely (no tier restriction)
+  if (room.roomType === "VIDEO") {
+    return { canUseMic: true };
+  }
+
   // DISCUSSION rooms - Check user tier
   if (user.role === "ADMIN") {
     return { canUseMic: true };

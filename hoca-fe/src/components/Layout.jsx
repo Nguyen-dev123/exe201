@@ -1,11 +1,28 @@
+import { useEffect } from "react";
 import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
-import { LogOut, User } from "lucide-react";
+import { userApi } from "../lib/services";
+import { LogOut, User, LayoutDashboard, Sparkles } from "lucide-react";
+import NotificationBell from "./NotificationBell";
+import { getTierInfo } from "../lib/format";
 
 export default function Layout() {
-  const { user, logout } = useAuthStore();
+  const { user, token, logout, setUser } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
+
+  // Refresh the user profile on mount so we always have fresh stats/tier/displayName
+  useEffect(() => {
+    if (token) {
+      userApi
+        .getMe()
+        .then((fresh) => setUser(fresh))
+        .catch(() => {
+          /* token interceptor handles 401 */
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   const handleLogout = () => {
     logout();
@@ -13,14 +30,25 @@ export default function Layout() {
   };
 
   const isActive = (path) => location.pathname === path;
+  const displayName = user?.displayName || user?.name || user?.email;
+  const tier = getTierInfo(user?.subscriptionTier);
+
+  const navLink = (to, label) => (
+    <Link
+      to={to}
+      className={`text-sm font-medium transition ${
+        isActive(to) ? "text-primary" : "text-white/70 hover:text-white"
+      }`}
+    >
+      {label}
+    </Link>
+  );
 
   return (
     <div className="min-h-screen bg-dark">
-      {/* Navigation */}
       <nav className="border-b border-white/10 bg-dark/95 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            {/* Logo */}
             <Link to="/" className="flex items-center space-x-2">
               <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center font-bold text-white text-xl">
                 H
@@ -28,72 +56,68 @@ export default function Layout() {
               <span className="text-2xl font-bold text-white">HOCA</span>
             </Link>
 
-            {/* Navigation Links */}
-            <div className="hidden md:flex items-center space-x-8">
-              <Link
-                to="/"
-                className={`text-sm font-medium transition ${
-                  isActive("/")
-                    ? "text-primary"
-                    : "text-white/70 hover:text-white"
-                }`}
-              >
-                Tính năng
-              </Link>
-              <Link
-                to="/pricing"
-                className={`text-sm font-medium transition ${
-                  isActive("/pricing")
-                    ? "text-primary"
-                    : "text-white/70 hover:text-white"
-                }`}
-              >
-                Bảng giá
-              </Link>
-              <Link
-                to="/about"
-                className={`text-sm font-medium transition ${
-                  isActive("/about")
-                    ? "text-primary"
-                    : "text-white/70 hover:text-white"
-                }`}
-              >
-                Về chúng tôi
-              </Link>
-              <Link
-                to="/community"
-                className={`text-sm font-medium transition ${
-                  isActive("/community")
-                    ? "text-primary"
-                    : "text-white/70 hover:text-white"
-                }`}
-              >
-                Quy tắc cộng đồng
-              </Link>
-            </div>
-
-            {/* Auth Buttons */}
-            <div className="flex items-center space-x-4">
+            <div className="hidden md:flex items-center space-x-7">
               {user ? (
                 <>
+                  {navLink("/dashboard", "Tổng quan")}
+                  {navLink("/rooms", "Phòng học")}
+                  {navLink("/leaderboard", "Xếp hạng")}
+                  {navLink("/badges", "Huy hiệu")}
+                  {navLink("/ranks", "Cấp bậc")}
                   <Link
-                    to="/rooms"
-                    className="text-sm font-medium text-white/70 hover:text-white transition"
+                    to="/ai"
+                    className={`text-sm font-medium transition flex items-center gap-1 ${
+                      isActive("/ai")
+                        ? "text-primary"
+                        : "text-white/70 hover:text-white"
+                    }`}
                   >
-                    Phòng học
+                    <Sparkles size={15} /> AI
                   </Link>
+                  {navLink("/pricing", "Nâng cấp")}
+                  {user.role === "ADMIN" && navLink("/admin", "Quản trị")}
+                </>
+              ) : (
+                <>
+                  {navLink("/", "Tính năng")}
+                  {navLink("/pricing", "Bảng giá")}
+                  {navLink("/leaderboard", "Xếp hạng")}
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center space-x-3">
+              {user ? (
+                <>
+                  <NotificationBell />
                   <Link
                     to="/profile"
-                    className="flex items-center space-x-2 px-4 py-2 rounded-lg bg-dark-lighter hover:bg-dark-card transition"
+                    className="flex items-center space-x-2 px-3 py-2 rounded-lg bg-dark-lighter hover:bg-dark-card transition"
                   >
-                    <User size={18} />
-                    <span className="text-sm font-medium">
-                      {user.name || user.email}
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-primary to-orange-600 flex items-center justify-center text-white text-xs font-bold overflow-hidden">
+                      {user.avatar ? (
+                        <img
+                          src={user.avatar}
+                          alt=""
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        displayName?.[0]?.toUpperCase() || "U"
+                      )}
+                    </div>
+                    <span className="text-sm font-medium text-white max-w-[120px] truncate">
+                      {displayName}
+                    </span>
+                    <span
+                      className={`pill ${tier.bg} ${tier.color} hidden lg:inline-flex`}
+                    >
+                      {tier.label}
                     </span>
                   </Link>
                   <button
                     onClick={handleLogout}
-                    className="flex items-center space-x-2 px-4 py-2 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500/20 transition"
+                    className="flex items-center space-x-2 px-3 py-2 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500/20 transition"
+                    title="Đăng xuất"
                   >
                     <LogOut size={18} />
                   </button>
@@ -119,16 +143,13 @@ export default function Layout() {
         </div>
       </nav>
 
-      {/* Main Content */}
       <main>
         <Outlet />
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-white/10 mt-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
           <div className="grid md:grid-cols-4 gap-8">
-            {/* Logo & Description */}
             <div className="md:col-span-2">
               <div className="flex items-center space-x-2 mb-4">
                 <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center font-bold text-white text-xl">
@@ -141,38 +162,36 @@ export default function Layout() {
               </p>
             </div>
 
-            {/* Links */}
             <div>
-              <h3 className="font-semibold text-white mb-4">Liên kết</h3>
+              <h3 className="font-semibold text-white mb-4">Khám phá</h3>
               <ul className="space-y-2">
                 <li>
                   <Link
-                    to="/community"
+                    to="/dashboard"
                     className="text-white/60 hover:text-primary text-sm transition"
                   >
-                    Quy tắc cộng đồng
+                    Tổng quan
                   </Link>
                 </li>
                 <li>
                   <Link
-                    to="/terms"
+                    to="/leaderboard"
                     className="text-white/60 hover:text-primary text-sm transition"
                   >
-                    Điều khoản
+                    Bảng xếp hạng
                   </Link>
                 </li>
                 <li>
                   <Link
-                    to="/privacy"
+                    to="/pricing"
                     className="text-white/60 hover:text-primary text-sm transition"
                   >
-                    Bảo mật
+                    Bảng giá
                   </Link>
                 </li>
               </ul>
             </div>
 
-            {/* Contact */}
             <div>
               <h3 className="font-semibold text-white mb-4">Liên hệ</h3>
               <ul className="space-y-2 text-white/60 text-sm">

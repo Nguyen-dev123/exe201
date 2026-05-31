@@ -1,11 +1,12 @@
 import { io } from "socket.io-client";
+import { API_BASE } from "./config";
 
 let socket = null;
 
 export const initSocket = (token) => {
   if (socket) return socket;
 
-  socket = io(import.meta.env.VITE_SOCKET_URL || "http://localhost:3000", {
+  socket = io(API_BASE, {
     auth: { token },
     transports: ["polling", "websocket"],
   });

@@ -18,7 +18,9 @@ const register = async (req, reply) => {
     reply.code(201).send({
       message: result.message,
       user: result.user,
-      requiresVerification: true,
+      token: result.token,
+      refreshToken: result.refreshToken,
+      requiresVerification: false,
     });
   } catch (error) {
     reply.code(400).send({ message: error.message });

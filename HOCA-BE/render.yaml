@@ -3,10 +3,10 @@ services:
   - type: web
     name: hoca-backend
     runtime: node
-    region: singapore # Change to your preferred region
-    plan: free # Options: free, starter, standard, pro
-    branch: main # Git branch to deploy
-    buildCommand: npm ci # Faster and more reliable than npm install
+    region: singapore
+    plan: free
+    branch: main
+    buildCommand: npm ci
     startCommand: npm start
     healthCheckPath: /
     envVars:
@@ -18,21 +18,33 @@ services:
         sync: false # Set manually in Render dashboard
       - key: JWT_SECRET
         generateValue: true
-      - key: JWT_REFRESH_SECRET
-        generateValue: true
+      # Frontend URL (set to your Vercel domain after deploying frontend)
+      - key: CLIENT_URL
+        sync: false
+      # AI assistant (optional - Groq recommended, free)
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Bank QR payment (VietQR)
+      - key: BANK_ID
+        sync: false
+      - key: BANK_ACCOUNT_NO
+        sync: false
+      - key: BANK_ACCOUNT_NAME
+        sync: false
+      - key: BANK_MEMO_PREFIX
+        sync: false
+      # Google OAuth (optional)
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
-      - key: EMAIL_HOST
+      # PayOS (optional - leave empty to use bank QR only)
+      - key: PAYOS_CLIENT_ID
         sync: false
-      - key: EMAIL_PORT
+      - key: PAYOS_API_KEY
         sync: false
-      - key: EMAIL_USER
+      - key: PAYOS_CHECKSUM_KEY
         sync: false
-      - key: EMAIL_PASSWORD
-        sync: false
-      - key: CLIENT_URL
-        value: https://hoca.asia
     autoDeploy: true
-

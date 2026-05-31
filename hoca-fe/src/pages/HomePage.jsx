@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useAuthStore } from "../store/authStore";
 import {
   Users,
   Target,
@@ -14,6 +15,8 @@ import {
 } from "lucide-react";
 
 export default function HomePage() {
+  const { user } = useAuthStore();
+  const ctaTarget = user ? "/dashboard" : "/register";
   return (
     <div className="bg-dark text-white">
       {/* Hero Section */}
@@ -23,7 +26,7 @@ export default function HomePage() {
           <div className="flex justify-center mb-8 animate-fadeIn">
             <div className="badge">
               <span className="w-2 h-2 bg-primary rounded-full animate-pulse-slow"></span>
-              Hơn 10,000+ học sinh đang sử dụng
+              Hơn 1,000+ học sinh đang sử dụng
             </div>
           </div>
 
@@ -42,16 +45,19 @@ export default function HomePage() {
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
               <Link
-                to="/register"
+                to={ctaTarget}
                 className="btn-primary flex items-center space-x-2"
               >
                 <Zap size={20} />
-                <span>Bắt đầu ngay - Miễn phí</span>
+                <span>{user ? "Vào học ngay" : "Bắt đầu ngay - Miễn phí"}</span>
               </Link>
-              <button className="btn-secondary flex items-center space-x-2">
-                <Video size={20} />
-                <span>Xem demo</span>
-              </button>
+              <Link
+                to="/leaderboard"
+                className="btn-secondary flex items-center space-x-2"
+              >
+                <TrendingUp size={20} />
+                <span>Xem bảng xếp hạng</span>
+              </Link>
             </div>
           </div>
 
@@ -102,22 +108,23 @@ export default function HomePage() {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {features.map((feature, index) => (
-              <div
+              <Link
                 key={index}
-                className="card-feature card-hover"
+                to={user ? feature.to : "/register"}
+                className="card-feature card-hover block"
                 style={{ animationDelay: `${index * 0.1}s` }}
               >
                 <div
-                  className={`icon-container mb-4 bg-${feature.color}-500/10`}
+                  className={`icon-container mb-4 ${colorMap[feature.color].bg}`}
                 >
                   <feature.icon
                     size={24}
-                    className={`text-${feature.color}-500`}
+                    className={colorMap[feature.color].text}
                   />
                 </div>
                 <h3 className="text-xl font-bold mb-2">{feature.title}</h3>
                 <p className="text-white/60">{feature.description}</p>
-              </div>
+              </Link>
             ))}
           </div>
         </div>
@@ -231,13 +238,13 @@ export default function HomePage() {
               <div className="grid grid-cols-2 gap-6">
                 <div>
                   <div className="text-4xl font-bold gradient-text mb-2">
-                    10K+
+                    1K+
                   </div>
                   <div className="text-white/60">Học viên tích cực</div>
                 </div>
                 <div>
                   <div className="text-4xl font-bold gradient-text mb-2">
-                    1M+
+                    10K+
                   </div>
                   <div className="text-white/60">Giờ học đã hoàn thành</div>
                 </div>
@@ -274,15 +281,19 @@ export default function HomePage() {
 
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             {communityRules.map((rule, index) => (
-              <div key={index} className="card-feature text-center">
+              <Link
+                to="/community"
+                key={index}
+                className="card-feature card-hover text-center block"
+              >
                 <div
-                  className={`icon-container mx-auto mb-4 bg-${rule.color}-500/10`}
+                  className={`icon-container mx-auto mb-4 ${colorMap[rule.color].bg}`}
                 >
-                  <rule.icon size={24} className={`text-${rule.color}-500`} />
+                  <rule.icon size={24} className={colorMap[rule.color].text} />
                 </div>
                 <h3 className="text-lg font-bold mb-2">{rule.title}</h3>
                 <p className="text-white/60 text-sm">{rule.description}</p>
-              </div>
+              </Link>
             ))}
           </div>
 
@@ -309,8 +320,8 @@ export default function HomePage() {
               Tham gia cộng đồng học tập ngay hôm nay và nâng cao hiệu suất học
               tập của bạn
             </p>
-            <Link to="/register" className="btn-primary inline-block">
-              Đăng ký miễn phí
+            <Link to={ctaTarget} className="btn-primary inline-block">
+              {user ? "Vào học ngay" : "Đăng ký miễn phí"}
             </Link>
           </div>
         </div>
@@ -319,6 +330,13 @@ export default function HomePage() {
   );
 }
 
+const colorMap = {
+  blue: { bg: "bg-blue-500/10", text: "text-blue-500" },
+  green: { bg: "bg-green-500/10", text: "text-green-500" },
+  orange: { bg: "bg-orange-500/10", text: "text-orange-500" },
+  purple: { bg: "bg-purple-500/10", text: "text-purple-500" },
+};
+
 const features = [
   {
     icon: Users,
@@ -326,36 +344,42 @@ const features = [
     description:
       "Học cùng bạn bè trong các phòng video call với giao diện hiện đại",
     color: "blue",
+    to: "/rooms",
   },
   {
     icon: Target,
     title: "Chuỗi học tập",
     description: "Duy trì động lực với hệ thống streak như Duolingo",
     color: "green",
+    to: "/dashboard",
   },
   {
     icon: TrendingUp,
     title: "Bảng xếp hạng",
     description: "Thi đua cùng cộng đồng và leo hạng liên tục",
     color: "orange",
+    to: "/leaderboard",
   },
   {
     icon: Award,
     title: "Huy hiệu thành tích",
     description: "Mở khóa huy hiệu khi đạt được các mốc quan trọng",
     color: "purple",
+    to: "/badges",
   },
   {
     icon: Video,
     title: "Virtual Background",
     description: "Xóa phông và thay nền chuyên nghiệp với AI",
     color: "blue",
+    to: "/pricing",
   },
   {
     icon: Clock,
     title: "Mục tiêu học tập",
     description: "Đặt mục tiêu hàng ngày và theo dõi tiến độ",
     color: "green",
+    to: "/dashboard",
   },
 ];
 

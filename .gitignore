@@ -31,3 +31,7 @@ Thumbs.db
 # Git
 .git/
 HOCA-BE/.git/
+
+# Tunnel binary (downloaded locally, not for repo)
+cloudflared.exe
+*.exe

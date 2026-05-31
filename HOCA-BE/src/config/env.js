@@ -1,7 +1,7 @@
-const dotenv = require('dotenv');
-const path = require('path');
+const dotenv = require("dotenv");
+const path = require("path");
 
-dotenv.config({ path: path.join(__dirname, '../../.env') });
+dotenv.config({ path: path.join(__dirname, "../../.env") });
 
 module.exports = {
   PORT: process.env.PORT,
@@ -19,15 +19,19 @@ module.exports = {
   EMAIL_PORT: process.env.EMAIL_PORT,
   EMAIL_USER: process.env.EMAIL_USER,
   EMAIL_PASSWORD: process.env.EMAIL_PASSWORD,
-  EMAIL_SECURE: process.env.EMAIL_SECURE === 'true', // Parse string to boolean
+  EMAIL_SECURE: process.env.EMAIL_SECURE === "true", // Parse string to boolean
   CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME,
   CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY,
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET,
   PAYOS_CLIENT_ID: process.env.PAYOS_CLIENT_ID,
   PAYOS_API_KEY: process.env.PAYOS_API_KEY,
   PAYOS_CHECKSUM_KEY: process.env.PAYOS_CHECKSUM_KEY,
+  // Bank QR (VietQR) for manual transfer payments
+  BANK_ID: process.env.BANK_ID, // bank code/BIN, e.g. "MB", "VCB", "970422"
+  BANK_ACCOUNT_NO: process.env.BANK_ACCOUNT_NO,
+  BANK_ACCOUNT_NAME: process.env.BANK_ACCOUNT_NAME,
+  BANK_MEMO_PREFIX: process.env.BANK_MEMO_PREFIX,
   // Email Microservice
   EMAIL_SERVICE_URL: process.env.EMAIL_SERVICE_URL,
   EMAIL_SERVICE_API_KEY: process.env.EMAIL_SERVICE_API_KEY,
 };
-
