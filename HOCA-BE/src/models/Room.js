@@ -25,7 +25,13 @@ const roomSchema = new mongoose.Schema(
 
     timerMode: {
       type: String,
-      enum: ["POMODORO_25_5", "POMODORO_45_5", "POMODORO_50_10", "COUNT_UP"],
+      enum: [
+        "POMODORO_25_5",
+        "POMODORO_50_10",
+        "POMODORO_90_15",
+        "POMODORO_45_5",
+        "COUNT_UP",
+      ],
       default: "POMODORO_25_5",
     },
 

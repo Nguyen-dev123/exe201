@@ -7,7 +7,6 @@ import {
   DoorOpen,
   DollarSign,
   LayoutDashboard,
-  Ban,
   Lock,
   Unlock,
   Search,
@@ -16,8 +15,9 @@ import {
   Flag,
   Star,
   MessageSquare,
+  Crown,
 } from "lucide-react";
-import { adminApi } from "../lib/services";
+import { adminApi, pricingApi } from "../lib/services";
 import { useAuthStore } from "../store/authStore";
 import { formatVND, minutesToHours, formatDate } from "../lib/format";
 
@@ -347,8 +347,8 @@ function ReportsTab() {
 
   const resolve = async (id, status, action) => {
     try {
-      await adminApi.resolveReport(id, { status, action });
-      toast.success("Đã xử lý báo cáo");
+      const res = await adminApi.resolveReport(id, { status, action });
+      toast.success(res?.message || "Đã xử lý báo cáo");
       refetch();
     } catch (err) {
       toast.error(err.response?.data?.message || "Thất bại");
@@ -397,14 +397,16 @@ function ReportsTab() {
                   <button
                     onClick={() => resolve(r._id, "ACTION_TAKEN", "WARN_USER")}
                     className="px-3 py-1.5 rounded-lg bg-orange-500/15 text-orange-400 hover:bg-orange-500/25 text-sm"
+                    title="Ghi nhận vi phạm — hệ thống tự phạt tăng dần (cảnh cáo → khóa chat → khóa vĩnh viễn)"
                   >
-                    Cảnh cáo
+                    Phạt vi phạm
                   </button>
                   <button
                     onClick={() => resolve(r._id, "ACTION_TAKEN", "BLOCK_USER")}
                     className="px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 hover:bg-red-500/25 text-sm"
+                    title="Khóa tài khoản vĩnh viễn ngay lập tức"
                   >
-                    Khóa user
+                    Khóa vĩnh viễn
                   </button>
                   <button
                     onClick={() => resolve(r._id, "DISMISSED")}
@@ -491,6 +493,230 @@ function FeedbackTab() {
   );
 }
 
+function PlansTab() {
+  const {
+    data: plans,
+    isLoading,
+    refetch,
+  } = useQuery({
+    queryKey: ["admin-plans"],
+    queryFn: pricingApi.getPlans,
+  });
+  const [editing, setEditing] = useState(null); // plan object or "new"
+
+  const empty = {
+    name: "",
+    description: "",
+    price: 0,
+    tier: "MONTHLY",
+    durationDays: 30,
+    isActive: true,
+    features: "",
+  };
+
+  const save = async (form) => {
+    const payload = {
+      ...form,
+      price: Number(form.price),
+      durationDays: Number(form.durationDays),
+      features: form.features
+        ? form.features
+            .split("\n")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
+    };
+    try {
+      if (form._id) {
+        await adminApi.updatePlan(form._id, payload);
+      } else {
+        await adminApi.createPlan(payload);
+      }
+      toast.success("Đã lưu gói");
+      setEditing(null);
+      refetch();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Lưu thất bại");
+    }
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm("Xóa gói này?")) return;
+    try {
+      await adminApi.deletePlan(id);
+      toast.success("Đã xóa gói");
+      refetch();
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Xóa thất bại");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <button
+          onClick={() => setEditing({ ...empty })}
+          className="btn-primary inline-flex items-center gap-2 text-sm"
+        >
+          <DollarSign size={16} /> Thêm gói mới
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="text-center py-12 text-white/50">Đang tải...</div>
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-4">
+          {(plans || []).map((p) => (
+            <div key={p._id} className="stat-card">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="font-bold">{p.name}</h3>
+                  <p className="text-xs text-white/40">
+                    {p.tier} · {p.durationDays} ngày
+                  </p>
+                </div>
+                <span className="font-bold text-primary">
+                  {formatVND(p.price)}
+                </span>
+              </div>
+              <p className="text-sm text-white/50 mt-2">{p.description}</p>
+              <div className="flex gap-2 mt-3">
+                <button
+                  onClick={() =>
+                    setEditing({
+                      ...p,
+                      features: (p.features || []).join("\n"),
+                    })
+                  }
+                  className="px-3 py-1.5 rounded-lg bg-dark-lighter hover:bg-dark text-sm"
+                >
+                  Sửa
+                </button>
+                <button
+                  onClick={() => remove(p._id)}
+                  className="px-3 py-1.5 rounded-lg bg-red-500/15 text-red-400 hover:bg-red-500/25 text-sm"
+                >
+                  Xóa
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <PlanEditModal
+          plan={editing}
+          onClose={() => setEditing(null)}
+          onSave={save}
+        />
+      )}
+    </div>
+  );
+}
+
+function PlanEditModal({ plan, onClose, onSave }) {
+  const [form, setForm] = useState(plan);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-dark-card border border-white/10 rounded-2xl p-6 w-full max-w-md text-white animate-scaleIn max-h-[90vh] overflow-y-auto">
+        <h2 className="text-xl font-bold mb-4">
+          {form._id ? "Sửa gói" : "Thêm gói mới"}
+        </h2>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm text-white/60 mb-1">Tên gói</label>
+            <input
+              value={form.name}
+              onChange={(e) => set("name", e.target.value)}
+              className="app-input"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-white/60 mb-1">Mô tả</label>
+            <input
+              value={form.description}
+              onChange={(e) => set("description", e.target.value)}
+              className="app-input"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm text-white/60 mb-1">
+                Giá (VND)
+              </label>
+              <input
+                type="number"
+                value={form.price}
+                onChange={(e) => set("price", e.target.value)}
+                className="app-input"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-white/60 mb-1">
+                Số ngày
+              </label>
+              <input
+                type="number"
+                value={form.durationDays}
+                onChange={(e) => set("durationDays", e.target.value)}
+                className="app-input"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm text-white/60 mb-1">Loại</label>
+            <select
+              value={form.tier}
+              onChange={(e) => set("tier", e.target.value)}
+              className="app-input"
+            >
+              <option value="MONTHLY">MONTHLY</option>
+              <option value="YEARLY">YEARLY</option>
+              <option value="LIFETIME">LIFETIME</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm text-white/60 mb-1">
+              Tính năng (mỗi dòng 1 mục)
+            </label>
+            <textarea
+              rows={4}
+              value={form.features}
+              onChange={(e) => set("features", e.target.value)}
+              className="app-input"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={form.isActive}
+              onChange={(e) => set("isActive", e.target.checked)}
+            />
+            Đang kích hoạt
+          </label>
+        </div>
+        <div className="flex gap-3 mt-5">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 bg-dark-lighter hover:bg-dark rounded-lg font-medium"
+          >
+            Hủy
+          </button>
+          <button
+            onClick={() => onSave(form)}
+            className="flex-1 py-2.5 bg-primary hover:bg-primary-dark rounded-lg font-semibold"
+          >
+            Lưu
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const { user } = useAuthStore();
   const [tab, setTab] = useState("overview");
@@ -504,6 +730,7 @@ export default function AdminPage() {
     { id: "users", label: "Người dùng", icon: Users },
     { id: "rooms", label: "Phòng học", icon: DoorOpen },
     { id: "revenue", label: "Doanh thu", icon: DollarSign },
+    { id: "plans", label: "Gói giá", icon: Crown },
     { id: "reports", label: "Báo cáo", icon: Flag },
     { id: "feedback", label: "Đánh giá", icon: Star },
   ];
@@ -540,6 +767,7 @@ export default function AdminPage() {
       {tab === "users" && <UsersTab />}
       {tab === "rooms" && <RoomsTab />}
       {tab === "revenue" && <RevenueTab />}
+      {tab === "plans" && <PlansTab />}
       {tab === "reports" && <ReportsTab />}
       {tab === "feedback" && <FeedbackTab />}
     </div>

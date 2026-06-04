@@ -1,24 +1,29 @@
-const Report = require('../models/Report');
-const User = require('../models/User');
+const Report = require("../models/Report");
+const User = require("../models/User");
+const { escalateViolation } = require("./moderation.service");
 
 const createReport = async (submitterId, data) => {
   return await Report.create({
     submitter: submitterId,
-    ...data
+    ...data,
   });
 };
 
 const getReports = async (query = {}) => {
   return await Report.find(query)
-    .populate('submitter', 'displayName email')
-    .populate('targetUser', 'displayName email avatar')
-    .populate('room', 'name')
-    .sort('-createdAt');
+    .populate("submitter", "displayName email")
+    .populate("targetUser", "displayName email avatar")
+    .populate("room", "name")
+    .sort("-createdAt");
 };
 
-const resolveReport = async (reportId, adminId, { status, resolutionNotes, action }) => {
+const resolveReport = async (
+  reportId,
+  adminId,
+  { status, resolutionNotes, action },
+) => {
   const report = await Report.findById(reportId);
-  if (!report) throw new Error('Report not found');
+  if (!report) throw new Error("Report not found");
 
   report.status = status;
   report.resolutionNotes = resolutionNotes;
@@ -26,23 +31,28 @@ const resolveReport = async (reportId, adminId, { status, resolutionNotes, actio
   report.resolvedAt = new Date();
   await report.save();
 
-  if (action === 'BLOCK_USER') {
-    await User.findByIdAndUpdate(report.targetUser, { isBlocked: true });
-  } else if (action === 'WARN_USER') {
-    // Add warning logic here if needed
-    const user = await User.findById(report.targetUser);
-    user.warnings.push({
-      reason: resolutionNotes || 'Violated community standards',
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+  let escalation = null;
+
+  if (action === "BLOCK_USER") {
+    // Immediate permanent block (admin override)
+    await User.findByIdAndUpdate(report.targetUser, {
+      isLocked: true,
+      isBlocked: true,
+      lockReason: resolutionNotes || "Vi phạm nghiêm trọng quy tắc cộng đồng",
     });
-    await user.save();
+  } else if (action === "WARN_USER") {
+    // Auto-escalating punishment based on total violations
+    escalation = await escalateViolation(
+      report.targetUser,
+      resolutionNotes || "Vi phạm quy tắc cộng đồng",
+    );
   }
 
-  return report;
+  return { report, escalation };
 };
 
 module.exports = {
   createReport,
   getReports,
-  resolveReport
+  resolveReport,
 };

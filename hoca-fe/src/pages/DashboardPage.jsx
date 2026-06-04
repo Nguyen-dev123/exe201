@@ -19,17 +19,22 @@ import { formatMinutes, minutesToHours } from "../lib/format";
 
 function StatCard({ icon: Icon, label, value, sub, color }) {
   return (
-    <div className="stat-card">
-      <div className="flex items-center justify-between mb-3">
-        <div
-          className={`w-11 h-11 rounded-xl flex items-center justify-center ${color}`}
-        >
-          <Icon size={22} />
+    <div className="stat-card group relative overflow-hidden">
+      <div
+        className={`absolute -right-6 -top-6 w-24 h-24 rounded-full blur-2xl opacity-20 transition-opacity group-hover:opacity-40 ${color}`}
+      />
+      <div className="relative">
+        <div className="flex items-center justify-between mb-3">
+          <div
+            className={`w-11 h-11 rounded-xl flex items-center justify-center ${color}`}
+          >
+            <Icon size={22} />
+          </div>
         </div>
+        <div className="text-2xl font-bold text-white">{value}</div>
+        <div className="text-sm text-white/50">{label}</div>
+        {sub && <div className="text-xs text-white/40 mt-1">{sub}</div>}
       </div>
-      <div className="text-2xl font-bold text-white">{value}</div>
-      <div className="text-sm text-white/50">{label}</div>
-      {sub && <div className="text-xs text-white/40 mt-1">{sub}</div>}
     </div>
   );
 }

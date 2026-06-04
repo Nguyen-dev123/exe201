@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import React from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { roomApi } from "../lib/services";
@@ -18,27 +19,77 @@ import { useAuthStore } from "../store/authStore";
 
 export default function RoomsPage() {
   const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const { user } = useAuthStore();
+
+  // Debounce search term
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchTerm);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
 
   const {
     data: rooms,
     isLoading,
     refetch,
   } = useQuery({
-    queryKey: ["rooms"],
-    queryFn: () => roomApi.getRooms(),
+    queryKey: ["rooms", debouncedSearch],
+    queryFn: () => roomApi.getRooms(debouncedSearch || undefined),
+    staleTime: 0, // Always consider data stale
+    refetchOnMount: "always", // Always refetch on mount
   });
+
+  const {
+    data: myRooms,
+    isLoading: myRoomsLoading,
+    refetch: refetchMyRooms,
+  } = useQuery({
+    queryKey: ["my-rooms"],
+    queryFn: () => roomApi.getMyRooms(),
+    staleTime: 0, // Always consider data stale
+    refetchOnMount: "always", // Always refetch on mount
+  });
+
+  // Merge public rooms with my rooms (avoid duplicates)
+  const allRooms = React.useMemo(() => {
+    if (!rooms) return myRooms || [];
+    if (!myRooms) return rooms || [];
+
+    const roomMap = new Map();
+    rooms.forEach((room) => roomMap.set(room._id, room));
+    myRooms.forEach((room) => roomMap.set(room._id, room));
+
+    return Array.from(roomMap.values());
+  }, [rooms, myRooms]);
+
+  // Force refetch when component mounts (after leaving a room)
+  React.useEffect(() => {
+    console.log("🔄 RoomsPage mounted, refetching data...");
+    refetch();
+    refetchMyRooms();
+  }, [refetch, refetchMyRooms]);
 
   const handleDeleteRoom = async (roomId, roomName, e) => {
     e.preventDefault();
     e.stopPropagation();
     if (!confirm(`Xóa phòng "${roomName}"?`)) return;
+
     try {
+      console.log("🗑️ Deleting room:", roomId);
       await roomApi.deleteRoom(roomId);
       toast.success("Đã xóa phòng!");
-      refetch();
+
+      // ✅ Refetch both queries immediately
+      console.log("🔄 Refetching after delete...");
+      await refetch();
+      await refetchMyRooms();
+      console.log("✅ Refetch complete");
     } catch (error) {
+      console.error("❌ Delete error:", error);
       toast.error(error.response?.data?.message || "Không thể xóa phòng");
     }
   };
@@ -47,18 +98,24 @@ export default function RoomsPage() {
     e.preventDefault();
     e.stopPropagation();
     if (!confirm(`Đóng phòng "${roomName}"? Mọi người sẽ bị đá ra.`)) return;
+
     try {
+      console.log("🔒 Closing room:", roomId);
       await roomApi.closeRoom(roomId);
       toast.success("Đã đóng phòng!");
-      refetch();
+
+      // ✅ Refetch both queries immediately
+      console.log("🔄 Refetching after close...");
+      await refetch();
+      await refetchMyRooms();
+      console.log("✅ Refetch complete");
     } catch (error) {
+      console.error("❌ Close error:", error);
       toast.error(error.response?.data?.message || "Không thể đóng phòng");
     }
   };
 
-  const filteredRooms = rooms?.filter((room) =>
-    room.name?.toLowerCase().includes(searchTerm.toLowerCase()),
-  );
+  const filteredRooms = allRooms;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-white">
@@ -85,28 +142,63 @@ export default function RoomsPage() {
           placeholder="Tìm kiếm phòng học..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="app-input pl-10"
+          className="app-input pl-10 pr-10"
         />
+        {isLoading && searchTerm && (
+          <div className="absolute right-3 top-1/2 -translate-y-1/2">
+            <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent"></div>
+          </div>
+        )}
       </div>
 
-      {isLoading ? (
+      {isLoading || myRoomsLoading ? (
         <div className="text-center py-16">
           <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-primary"></div>
-          <p className="mt-4 text-white/50">Đang tải...</p>
+          <p className="mt-4 text-white/50">
+            {searchTerm ? "Đang tìm kiếm..." : "Đang tải..."}
+          </p>
         </div>
       ) : filteredRooms?.length === 0 ? (
         <div className="text-center py-16 stat-card">
           <Users className="mx-auto h-12 w-12 text-white/30" />
-          <h3 className="mt-3 font-medium">Chưa có phòng học</h3>
-          <p className="mt-1 text-sm text-white/40">
-            Hãy tạo phòng học đầu tiên của bạn
-          </p>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="btn-primary inline-flex items-center gap-2 mt-5"
-          >
-            <Plus size={18} /> Tạo phòng mới
-          </button>
+          {searchTerm ? (
+            <>
+              <h3 className="mt-3 font-medium">Không tìm thấy phòng học</h3>
+              <p className="mt-1 text-sm text-white/40">
+                Không có phòng nào có tên &ldquo;{searchTerm}&rdquo;
+              </p>
+              <p className="mt-1 text-xs text-white/30">
+                Thử tìm kiếm với từ khóa khác hoặc tạo phòng mới
+              </p>
+              <div className="flex gap-3 justify-center mt-5">
+                <button
+                  onClick={() => setSearchTerm("")}
+                  className="btn-secondary inline-flex items-center gap-2"
+                >
+                  Xóa tìm kiếm
+                </button>
+                <button
+                  onClick={() => setShowCreateModal(true)}
+                  className="btn-primary inline-flex items-center gap-2"
+                >
+                  <Plus size={18} /> Tạo phòng mới
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 className="mt-3 font-medium">Chưa có phòng học</h3>
+              <p className="mt-1 text-sm text-white/40">
+                Hãy tạo phòng học đầu tiên của bạn
+              </p>
+              <button
+                onClick={() => setShowCreateModal(true)}
+                className="btn-primary inline-flex items-center gap-2 mt-5"
+              >
+                <Plus size={18} /> Tạo phòng mới
+              </button>
+            </>
+          )}
         </div>
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -208,6 +300,7 @@ export default function RoomsPage() {
 }
 
 function CreateRoomModal({ onClose, onSuccess }) {
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [roomType, setRoomType] = useState("SILENT");
@@ -225,7 +318,7 @@ function CreateRoomModal({ onClose, onSuccess }) {
     e.preventDefault();
     setLoading(true);
     try {
-      await roomApi.createRoom({
+      const newRoom = await roomApi.createRoom({
         name,
         description,
         roomType,
@@ -235,6 +328,8 @@ function CreateRoomModal({ onClose, onSuccess }) {
       });
       toast.success("Tạo phòng thành công!");
       onSuccess();
+      // Navigate to the newly created room so owner joins automatically
+      navigate(`/rooms/${newRoom._id}`);
     } catch (error) {
       toast.error(error.response?.data?.message || "Tạo phòng thất bại");
     } finally {
@@ -338,8 +433,7 @@ function CreateRoomModal({ onClose, onSuccess }) {
               >
                 <option value="POMODORO_25_5">25 / 5</option>
                 <option value="POMODORO_50_10">50 / 10</option>
-                <option value="POMODORO_45_5">45 / 5</option>
-                <option value="COUNT_UP">Đếm lên</option>
+                <option value="POMODORO_90_15">90 / 15</option>
               </select>
             </div>
           </div>

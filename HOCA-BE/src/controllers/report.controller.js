@@ -1,4 +1,4 @@
-const reportService = require('../services/report.service');
+const reportService = require("../services/report.service");
 
 const submitReport = async (req, reply) => {
   try {
@@ -22,10 +22,22 @@ const getAllReports = async (req, reply) => {
 const updateReport = async (req, reply) => {
   try {
     const { status, resolutionNotes, action } = req.body;
-    const report = await reportService.resolveReport(req.params.id, req.user.id, {
-      status, resolutionNotes, action
+    const result = await reportService.resolveReport(
+      req.params.id,
+      req.user.id,
+      {
+        status,
+        resolutionNotes,
+        action,
+      },
+    );
+    reply.send({
+      report: result.report,
+      escalation: result.escalation,
+      message: result.escalation
+        ? `Đã xử lý: ${result.escalation.tier} (vi phạm lần ${result.escalation.violationCount})`
+        : "Đã xử lý báo cáo",
     });
-    reply.send(report);
   } catch (error) {
     reply.code(400).send({ message: error.message });
   }
@@ -34,5 +46,5 @@ const updateReport = async (req, reply) => {
 module.exports = {
   submitReport,
   getAllReports,
-  updateReport
+  updateReport,
 };

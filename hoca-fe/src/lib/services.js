@@ -122,6 +122,12 @@ export const feedbackApi = {
   create: (data) => api.post("/api/feedback", data).then((r) => r.data),
 };
 
+// ============ CHAT ============
+export const chatApi = {
+  getMessages: (roomId, limit = 50) =>
+    api.get(`/api/chat/${roomId}`, { params: { limit } }).then((r) => r.data),
+};
+
 // ============ STICKERS ============
 export const stickerApi = {
   getAll: () => api.get("/api/stickers").then((r) => r.data),
@@ -165,6 +171,31 @@ export const adminApi = {
     api.get("/api/admin/feedback", { params }).then((r) => r.data),
   getFeedbackSummary: () =>
     api.get("/api/admin/feedback/summary").then((r) => r.data),
+  // Pricing plan management
+  createPlan: (data) => api.post("/api/pricing", data).then((r) => r.data),
+  updatePlan: (id, data) =>
+    api.put(`/api/pricing/${id}`, data).then((r) => r.data),
+  deletePlan: (id) => api.delete(`/api/pricing/${id}`).then((r) => r.data),
+  // Badge management
+  createBadge: (data) => api.post("/api/badges", data).then((r) => r.data),
+  updateBadge: (id, data) =>
+    api.put(`/api/badges/${id}`, data).then((r) => r.data),
+  deleteBadge: (id) => api.delete(`/api/badges/${id}`).then((r) => r.data),
+  // Sticker management
+  createSticker: (formData) =>
+    api
+      .post("/api/stickers", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      })
+      .then((r) => r.data),
+  deleteSticker: (id) => api.delete(`/api/stickers/${id}`).then((r) => r.data),
+  // Room categories
+  getCategories: () =>
+    api.get("/api/admin/rooms/categories").then((r) => r.data),
+  createCategory: (data) =>
+    api.post("/api/admin/rooms/categories", data).then((r) => r.data),
+  deleteCategory: (id) =>
+    api.delete(`/api/admin/rooms/categories/${id}`).then((r) => r.data),
 };
 
 // ============ REPORT ============

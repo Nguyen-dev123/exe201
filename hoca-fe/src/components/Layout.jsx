@@ -45,12 +45,12 @@ export default function Layout() {
   );
 
   return (
-    <div className="min-h-screen bg-dark">
-      <nav className="border-b border-white/10 bg-dark/95 backdrop-blur-sm sticky top-0 z-50">
+    <div className="min-h-screen">
+      <nav className="border-b border-white/10 glass sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
-            <Link to="/" className="flex items-center space-x-2">
-              <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center font-bold text-white text-xl">
+            <Link to="/" className="flex items-center space-x-2 press">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center font-bold text-white text-xl bg-gradient-to-br from-primary to-orange-600 glow-primary">
                 H
               </div>
               <span className="text-2xl font-bold text-white">HOCA</span>
@@ -195,8 +195,26 @@ export default function Layout() {
             <div>
               <h3 className="font-semibold text-white mb-4">Liên hệ</h3>
               <ul className="space-y-2 text-white/60 text-sm">
-                <li>Email: support@hoca.asia</li>
-                <li>Website: www.hoca.asia</li>
+                <li>
+                  Email:{" "}
+                  <a
+                    href="mailto:hocavn2026@gmail.com"
+                    className="hover:text-primary transition"
+                  >
+                    hocavn2026@gmail.com
+                  </a>
+                </li>
+                <li>
+                  Website:{" "}
+                  <a
+                    href="https://exe201-ten.vercel.app"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-primary transition"
+                  >
+                    exe201-ten.vercel.app
+                  </a>
+                </li>
               </ul>
             </div>
           </div>

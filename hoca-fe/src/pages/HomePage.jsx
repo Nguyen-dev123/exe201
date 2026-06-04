@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
+import PricingCards from "../components/PricingCards";
 import {
   Users,
   Target,
@@ -18,10 +19,23 @@ export default function HomePage() {
   const { user } = useAuthStore();
   const ctaTarget = user ? "/dashboard" : "/register";
   return (
-    <div className="bg-dark text-white">
+    <div className="text-white">
       {/* Hero Section */}
       <section className="relative overflow-hidden">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-32">
+        {/* Glowing background orbs */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -top-20 left-1/4 w-96 h-96 bg-primary/20 rounded-full blur-[120px] animate-float"></div>
+          <div
+            className="absolute top-40 right-1/4 w-80 h-80 bg-accent-blue/20 rounded-full blur-[120px] animate-float"
+            style={{ animationDelay: "2s" }}
+          ></div>
+          <div
+            className="absolute bottom-0 left-1/3 w-72 h-72 bg-accent-purple/15 rounded-full blur-[120px] animate-float"
+            style={{ animationDelay: "4s" }}
+          ></div>
+        </div>
+
+        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-32">
           {/* Badge */}
           <div className="flex justify-center mb-8 animate-fadeIn">
             <div className="badge">
@@ -46,14 +60,14 @@ export default function HomePage() {
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
               <Link
                 to={ctaTarget}
-                className="btn-primary flex items-center space-x-2"
+                className="btn-primary flex items-center space-x-2 press"
               >
                 <Zap size={20} />
                 <span>{user ? "Vào học ngay" : "Bắt đầu ngay - Miễn phí"}</span>
               </Link>
               <Link
                 to="/leaderboard"
-                className="btn-secondary flex items-center space-x-2"
+                className="btn-secondary flex items-center space-x-2 press"
               >
                 <TrendingUp size={20} />
                 <span>Xem bảng xếp hạng</span>
@@ -63,27 +77,38 @@ export default function HomePage() {
 
           {/* Video Call Preview */}
           <div className="mt-16 max-w-5xl mx-auto animate-fadeIn">
-            <div className="relative rounded-2xl border-2 border-white/10 bg-dark-card p-8">
+            <div className="relative rounded-2xl border border-white/10 bg-dark-card/60 backdrop-blur-md p-8 shadow-2xl">
               <div className="grid grid-cols-3 gap-4 mb-6">
                 {[1, 2, 3].map((i) => (
-                  <div
+                  <Link
                     key={i}
-                    className="aspect-video bg-dark-lighter rounded-xl border border-white/10 flex flex-col items-center justify-center"
+                    to={user ? "/rooms" : "/register"}
+                    className="aspect-video bg-dark-lighter/70 rounded-xl border border-white/10 flex flex-col items-center justify-center hover:border-primary/40 transition press"
+                    title="Vào phòng học"
                   >
-                    <div className="w-12 h-12 bg-white/10 rounded-full flex items-center justify-center mb-2">
-                      <Users className="text-white/50" size={24} />
+                    <div className="w-12 h-12 bg-gradient-to-br from-primary/30 to-accent-blue/30 rounded-full flex items-center justify-center mb-2">
+                      <Users className="text-white/70" size={24} />
                     </div>
                     <span className="text-xs text-white/50">Học viên {i}</span>
-                  </div>
+                    <span className="mt-2 w-1.5 h-1.5 rounded-full bg-green-400 live-dot"></span>
+                  </Link>
                 ))}
               </div>
               <div className="flex justify-center space-x-4">
-                <button className="w-12 h-12 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition">
+                <Link
+                  to={user ? "/rooms" : "/register"}
+                  className="w-12 h-12 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition press"
+                  title="Vào phòng học"
+                >
                   <Video size={20} />
-                </button>
-                <button className="w-12 h-12 bg-dark-lighter rounded-full flex items-center justify-center hover:bg-dark transition">
+                </Link>
+                <Link
+                  to={user ? "/rooms" : "/register"}
+                  className="w-12 h-12 bg-dark-lighter rounded-full flex items-center justify-center hover:bg-dark transition press"
+                  title="Vào phòng học"
+                >
                   <Video size={20} />
-                </button>
+                </Link>
               </div>
             </div>
           </div>
@@ -91,7 +116,7 @@ export default function HomePage() {
       </section>
 
       {/* Features Section */}
-      <section className="py-20 bg-dark-lighter">
+      <section className="py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <p className="text-primary font-semibold mb-2 uppercase tracking-wide text-sm">
@@ -130,94 +155,25 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Pricing Section */}
+      {/* Pricing Section - 4 columns */}
       <section className="py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-5xl font-bold mb-4">
-              Bảng giá đơn giản
+              Gói Nâng Cấp HOCA+
             </h2>
             <p className="text-white/60 text-lg">
               Chọn gói phù hợp với nhu cầu học tập của bạn
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            {/* Free Plan */}
-            <div className="card-feature">
-              <h3 className="text-2xl font-bold mb-2">Miễn phí</h3>
-              <p className="text-white/60 mb-6">Dành cho mọi người bắt đầu</p>
-              <div className="mb-6">
-                <span className="text-5xl font-bold">0đ</span>
-                <span className="text-white/60">/tháng</span>
-              </div>
-              <ul className="space-y-3 mb-8">
-                {freePlanFeatures.map((feature, i) => (
-                  <li key={i} className="flex items-start space-x-3">
-                    <CheckCircle
-                      size={20}
-                      className="text-green-500 flex-shrink-0 mt-0.5"
-                    />
-                    <span className="text-white/80">{feature}</span>
-                  </li>
-                ))}
-                {freePlanLimits.map((limit, i) => (
-                  <li key={i} className="flex items-start space-x-3">
-                    <XCircle
-                      size={20}
-                      className="text-white/30 flex-shrink-0 mt-0.5"
-                    />
-                    <span className="text-white/40">{limit}</span>
-                  </li>
-                ))}
-              </ul>
-              <Link
-                to="/register"
-                className="btn-secondary w-full text-center block"
-              >
-                Bắt đầu miễn phí
-              </Link>
-            </div>
-
-            {/* Premium Plan */}
-            <div className="card-feature border-primary relative">
-              <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
-                <span className="bg-primary text-white px-4 py-1 rounded-full text-sm font-semibold">
-                  PHỔ BIẾN NHẤT
-                </span>
-              </div>
-              <h3 className="text-2xl font-bold mb-2">HOCA+</h3>
-              <p className="text-white/60 mb-6">Tăng tốc trải nghiệm học tập</p>
-              <div className="mb-6">
-                <span className="text-5xl font-bold gradient-text">
-                  49.000đ
-                </span>
-                <span className="text-white/60">/tháng</span>
-              </div>
-              <ul className="space-y-3 mb-8">
-                {premiumPlanFeatures.map((feature, i) => (
-                  <li key={i} className="flex items-start space-x-3">
-                    <CheckCircle
-                      size={20}
-                      className="text-primary flex-shrink-0 mt-0.5"
-                    />
-                    <span className="text-white/80">{feature}</span>
-                  </li>
-                ))}
-              </ul>
-              <Link
-                to="/pricing"
-                className="btn-primary w-full text-center block"
-              >
-                Nâng cấp ngay
-              </Link>
-            </div>
-          </div>
+          {/* Pricing cards component - reuse from PricingPage */}
+          <PricingCards />
         </div>
       </section>
 
       {/* Mission Section */}
-      <section className="py-20 bg-dark-lighter">
+      <section className="py-20 bg-white/[0.02] border-y border-white/5">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid md:grid-cols-2 gap-12 items-center">
             <div>
@@ -251,11 +207,14 @@ export default function HomePage() {
               </div>
             </div>
             <div className="relative">
-              <div className="aspect-square bg-dark-card rounded-2xl border border-white/10 p-8 flex flex-col items-center justify-center space-y-8">
-                <div className="w-32 h-32 bg-primary/20 rounded-2xl flex items-center justify-center">
+              <div className="aspect-square bg-dark-card/60 backdrop-blur-md rounded-2xl border border-white/10 p-8 flex flex-col items-center justify-center space-y-8 shadow-2xl">
+                <div className="w-32 h-32 bg-primary/20 rounded-2xl flex items-center justify-center animate-float">
                   <Target size={64} className="text-primary" />
                 </div>
-                <div className="w-32 h-32 bg-accent-blue/20 rounded-2xl flex items-center justify-center">
+                <div
+                  className="w-32 h-32 bg-accent-blue/20 rounded-2xl flex items-center justify-center animate-float"
+                  style={{ animationDelay: "1.5s" }}
+                >
                   <Users size={64} className="text-accent-blue" />
                 </div>
               </div>

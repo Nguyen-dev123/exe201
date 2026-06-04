@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import api from "../lib/api";
 import { initSocket, getSocket } from "../lib/socket";
+import { chatApi } from "../lib/services";
 import { useAuthStore } from "../store/authStore";
 import {
   Send,
@@ -26,6 +27,7 @@ import StickerPicker from "../components/StickerPicker";
 export default function RoomDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { token, user } = useAuthStore();
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
@@ -36,6 +38,7 @@ export default function RoomDetailPage() {
   const [reportTarget, setReportTarget] = useState(null);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showStickers, setShowStickers] = useState(false);
+  const [aiThinking, setAiThinking] = useState(false);
   const messagesEndRef = useRef(null);
 
   const { data: room, isLoading } = useQuery({
@@ -50,14 +53,50 @@ export default function RoomDetailPage() {
   const isAdmin = user?.role === "ADMIN";
 
   useEffect(() => {
-    setCanChat(isPremium || isAdmin);
-  }, [isPremium, isAdmin]);
+    // ✅ CHANGED: Allow ALL users to chat (FREE + PREMIUM + ADMIN)
+    setCanChat(true); // Everyone can chat now!
+  }, []);
 
   useEffect(() => {
     if (!token) return;
 
+    // Load chat history first (so reload keeps messages)
+    chatApi
+      .getMessages(id, 50)
+      .then((history) => {
+        const mapped = (history || []).map((m) => ({
+          _id: m._id,
+          userId: m.sender?._id || m.sender,
+          displayName: m.sender?.displayName || "User",
+          avatar: m.sender?.avatar,
+          message: m.content,
+          content: m.content,
+          type: m.type,
+          timestamp: m.createdAt,
+        }));
+        setMessages(mapped);
+      })
+      .catch(() => {
+        /* room may have no history yet */
+      });
+
     const socket = initSocket(token);
-    socket.emit("join-room", { roomId: id });
+
+    // Wait for socket to be connected before joining room
+    const joinRoom = () => {
+      if (socket.connected) {
+        console.log("🔄 Joining room:", id);
+        socket.emit("join-room", { roomId: id });
+      } else {
+        console.log("⏳ Waiting for socket connection...");
+        socket.once("connect", () => {
+          console.log("🔄 Socket connected, now joining room:", id);
+          socket.emit("join-room", { roomId: id });
+        });
+      }
+    };
+
+    joinRoom();
 
     const onChat = (message) => {
       setMessages((prev) => [...prev, message]);
@@ -93,6 +132,7 @@ export default function RoomDetailPage() {
     };
     const onChatError = (e) => toast.error(e.message);
     const onError = (e) => toast.error(e.message || "Có lỗi xảy ra");
+    const onAiThinking = (d) => setAiThinking(!!d.isThinking);
 
     socket.on("chat-message", onChat);
     socket.on("user-joined", onJoined);
@@ -106,6 +146,7 @@ export default function RoomDetailPage() {
     socket.on("session-expired", onSessionExpired);
     socket.on("chat-error", onChatError);
     socket.on("error", onError);
+    socket.on("ai-thinking", onAiThinking);
 
     return () => {
       socket.emit("leave-room", { roomId: id });
@@ -121,12 +162,13 @@ export default function RoomDetailPage() {
       socket.off("session-expired", onSessionExpired);
       socket.off("chat-error", onChatError);
       socket.off("error", onError);
+      socket.off("ai-thinking", onAiThinking);
     };
   }, [id, token, navigate]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, aiThinking]);
 
   const handleSendMessage = (e) => {
     e.preventDefault();
@@ -158,20 +200,83 @@ export default function RoomDetailPage() {
   const finishLeave = async () => {
     setShowFeedback(false);
     setLeaving(true);
+
+    // Emit leave-room and cleanup listeners immediately
+    const socket = getSocket();
+    if (socket) {
+      console.log("🚪 Leaving room:", id);
+      socket.emit("leave-room", { roomId: id });
+
+      // Remove all room-specific listeners to prevent receiving stale updates
+      socket.off("chat-message");
+      socket.off("user-joined");
+      socket.off("user-left");
+      socket.off("room-users");
+      socket.off("room-closed");
+      socket.off("room-deleted");
+      socket.off("session-info");
+      socket.off("time-status");
+      socket.off("session-warning");
+      socket.off("session-expired");
+      socket.off("chat-error");
+      socket.off("error");
+      socket.off("ai-thinking");
+    }
+
     try {
+      console.log("📡 Calling leave API...");
       await api.post(`/api/rooms/${id}/leave`);
-    } catch {
+      console.log("✅ Leave API success");
+
+      // ✅ Invalidate and refetch room queries immediately
+      console.log("🔄 Invalidating queries...");
+      await queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      await queryClient.invalidateQueries({ queryKey: ["my-rooms"] });
+      await queryClient.invalidateQueries({ queryKey: ["room", id] });
+
+      // Force refetch immediately
+      await queryClient.refetchQueries({ queryKey: ["rooms"] });
+      await queryClient.refetchQueries({ queryKey: ["my-rooms"] });
+
+      console.log("✅ Queries invalidated and refetched");
+    } catch (err) {
+      console.error("❌ Leave error:", err);
       /* ignore - still navigate away */
     } finally {
+      console.log("🔀 Navigating to /rooms");
       navigate("/rooms");
     }
   };
 
   const handleCloseRoom = async () => {
     if (!confirm("Đóng phòng này? Tất cả người dùng sẽ bị đá ra.")) return;
+
+    // Cleanup listeners before closing
+    const socket = getSocket();
+    if (socket) {
+      socket.off("chat-message");
+      socket.off("user-joined");
+      socket.off("user-left");
+      socket.off("room-users");
+      socket.off("room-closed");
+      socket.off("room-deleted");
+      socket.off("session-info");
+      socket.off("time-status");
+      socket.off("session-warning");
+      socket.off("session-expired");
+      socket.off("chat-error");
+      socket.off("error");
+      socket.off("ai-thinking");
+    }
+
     try {
       await api.post(`/api/rooms/${id}/close`);
       toast.success("Đã đóng phòng!");
+
+      // ✅ Invalidate room queries
+      queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      queryClient.invalidateQueries({ queryKey: ["my-rooms"] });
+
       navigate("/rooms");
     } catch (error) {
       toast.error(error.response?.data?.message || "Không thể đóng phòng");
@@ -343,6 +448,18 @@ export default function RoomDetailPage() {
                   );
                 })
               )}
+              {aiThinking && (
+                <div className="flex items-end gap-2">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-orange-600 flex items-center justify-center text-white text-xs font-semibold">
+                    AI
+                  </div>
+                  <div className="px-4 py-3 rounded-2xl bg-dark-lighter flex gap-1">
+                    <span className="typing-dot w-2 h-2 bg-white/50 rounded-full" />
+                    <span className="typing-dot w-2 h-2 bg-white/50 rounded-full" />
+                    <span className="typing-dot w-2 h-2 bg-white/50 rounded-full" />
+                  </div>
+                </div>
+              )}
               <div ref={messagesEndRef} />
             </div>
 
@@ -370,7 +487,7 @@ export default function RoomDetailPage() {
                   <input
                     value={newMessage}
                     onChange={(e) => setNewMessage(e.target.value)}
-                    placeholder="Nhập tin nhắn... (gõ @HOCA AI để hỏi trợ lý)"
+                    placeholder="Nhập tin nhắn..."
                     className="flex-1 app-input"
                   />
                   <button

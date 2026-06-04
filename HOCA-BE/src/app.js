@@ -2,7 +2,9 @@ const fastify = require("fastify");
 const cors = require("@fastify/cors");
 const jwt = require("@fastify/jwt");
 const multipart = require("@fastify/multipart");
+const rateLimit = require("@fastify/rate-limit");
 const { JWT_SECRET, CLIENT_URL } = require("./config/env");
+const { globalRateLimit } = require("./config/rateLimit");
 // Register Models
 require("./models/User");
 require("./models/Badge");
@@ -10,7 +12,6 @@ require("./models/Room");
 require("./models/RoomCategory");
 require("./models/Transaction");
 require("./models/Report");
-require("./models/SystemConfig");
 require("./models/SystemConfig");
 require("./models/Message");
 require("./models/Rank");
@@ -20,6 +21,9 @@ require("./models/Feedback");
 const logger = require("./middlewares/logger.middleware");
 const buildApp = async () => {
   const app = fastify();
+
+  // Register Rate Limiting (Global)
+  await app.register(rateLimit, globalRateLimit);
 
   // Register Multipart for file uploads
   await app.register(multipart, {

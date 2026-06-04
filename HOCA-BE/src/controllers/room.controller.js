@@ -18,7 +18,22 @@ const getRooms = async (req, reply) => {
       query.name = { $regex: search, $options: "i" };
     }
     const rooms = await roomService.getPublicRooms(query);
-    reply.send(rooms);
+
+    // Add hasPassword flag for frontend (without revealing the actual password)
+    const roomsWithPasswordFlag = rooms.map((room) => {
+      const roomObj = room.toObject ? room.toObject() : room;
+      const hasPassword = !!room.password;
+
+      // Remove password from response for security
+      delete roomObj.password;
+
+      return {
+        ...roomObj,
+        hasPassword, // Flag if room needs password
+      };
+    });
+
+    reply.send(roomsWithPasswordFlag);
   } catch (error) {
     reply.code(500).send({ message: error.message });
   }

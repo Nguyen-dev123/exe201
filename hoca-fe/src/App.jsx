@@ -20,6 +20,7 @@ import AdminPaymentsPage from "./pages/AdminPaymentsPage";
 import AdminPage from "./pages/AdminPage";
 import CommunityPage from "./pages/CommunityPage";
 import TestPage from "./pages/TestPage";
+import SocketDebugPage from "./pages/SocketDebugPage";
 
 function PrivateRoute({ children }) {
   const { user } = useAuthStore();
@@ -50,6 +51,14 @@ function App() {
         />
         <Route path="community" element={<CommunityPage />} />
         <Route path="test" element={<TestPage />} />
+        <Route
+          path="socket-debug"
+          element={
+            <PrivateRoute>
+              <SocketDebugPage />
+            </PrivateRoute>
+          }
+        />
 
         {/* Payment redirects from PayOS */}
         <Route

@@ -42,12 +42,13 @@ export default function PricingPage() {
   return (
     <div className="bg-dark text-white min-h-screen py-16">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Gói Nâng Cấp HOCA+ */}
         <div className="text-center mb-14">
           <h1 className="text-4xl md:text-5xl font-bold mb-4">
-            Nâng cấp <span className="gradient-text">HOCA+</span>
+            Gói Nâng Cấp HOCA+
           </h1>
           <p className="text-white/60 text-lg">
-            Mở khóa toàn bộ tiềm năng học tập của bạn
+            Chọn gói phù hợp với nhu cầu học tập của bạn
           </p>
           {user && (
             <p className="mt-3 text-sm text-white/50">

@@ -1,8 +1,8 @@
-const Room = require('../models/Room');
-const StudySession = require('../models/StudySession');
-const User = require('../models/User');
-const SystemConfig = require('../models/SystemConfig');
-const subscriptionService = require('./subscription.service');
+const Room = require("../models/Room");
+const StudySession = require("../models/StudySession");
+const User = require("../models/User");
+const SystemConfig = require("../models/SystemConfig");
+const subscriptionService = require("./subscription.service");
 
 // Helper: Get config with default
 const getConfig = async (key, defaultVal) => {
@@ -12,9 +12,11 @@ const getConfig = async (key, defaultVal) => {
 // Helper: Check if same day
 const isSameDay = (date1, date2) => {
   if (!date1 || !date2) return false;
-  return date1.getDate() === date2.getDate() &&
+  return (
+    date1.getDate() === date2.getDate() &&
     date1.getMonth() === date2.getMonth() &&
-    date1.getFullYear() === date2.getFullYear();
+    date1.getFullYear() === date2.getFullYear()
+  );
 };
 
 // Helper: Reset user's daily stats if new day
@@ -34,16 +36,27 @@ const resetDailyStatsIfNeeded = async (user) => {
 
 const createRoom = async (userId, roomData) => {
   const user = await User.findById(userId);
-  if (!user) throw new Error('User not found');
+  if (!user) throw new Error("User not found");
+
+  // Enforce room-creation ban (violation escalation)
+  if (user.roomBannedUntil && new Date(user.roomBannedUntil) > new Date()) {
+    const until = new Date(user.roomBannedUntil).toLocaleString("vi-VN");
+    throw new Error(
+      `Bạn đang bị tạm khóa tạo phòng do vi phạm quy tắc. Mở lại sau: ${until}`,
+    );
+  }
 
   // Reset daily stats if new day
   await resetDailyStatsIfNeeded(user);
 
   // Determine room type (default SILENT, only HOCA+ can create DISCUSSION)
-  let roomType = roomData.roomType || 'SILENT';
+  let roomType = roomData.roomType || "SILENT";
 
   // Check room creation eligibility (includes roomType validation)
-  const eligibility = subscriptionService.checkRoomCreationEligibility(user, roomType);
+  const eligibility = subscriptionService.checkRoomCreationEligibility(
+    user,
+    roomType,
+  );
   if (!eligibility.canCreate) {
     throw new Error(eligibility.reason);
   }
@@ -52,20 +65,26 @@ const createRoom = async (userId, roomData) => {
   const tierLimits = subscriptionService.getTierLimits(tier);
 
   // Force SILENT for FREE users (safety check)
-  if (tier === 'FREE' && roomType === 'DISCUSSION') {
-    roomType = 'SILENT';
+  if (tier === "FREE" && roomType === "DISCUSSION") {
+    roomType = "SILENT";
   }
 
   // Respect user's maxParticipants selection, but cap it at the tier's limit
-  const tierMaxParticipants = tier === 'FREE' ? 30 : 999;
+  const tierMaxParticipants = tier === "FREE" ? 30 : 999;
   const userRequestedMax = roomData.maxParticipants || 4;
   const maxParticipants = Math.min(userRequestedMax, tierMaxParticipants);
 
   // Calculate autoCloseAt for FREE tier rooms
   let autoCloseAt = null;
   if (tierLimits.roomDurationMinutes !== Infinity) {
-    autoCloseAt = new Date(Date.now() + tierLimits.roomDurationMinutes * 60 * 1000);
+    autoCloseAt = new Date(
+      Date.now() + tierLimits.roomDurationMinutes * 60 * 1000,
+    );
   }
+
+  // Rooms with password can still be public (searchable) - user can choose
+  // Default: all rooms are public (searchable) unless user explicitly sets isPublic: false
+  const isPublic = roomData.isPublic !== undefined ? roomData.isPublic : true;
 
   const room = await Room.create({
     ...roomData,
@@ -73,8 +92,9 @@ const createRoom = async (userId, roomData) => {
     maxParticipants,
     owner: userId,
     isActive: true,
+    isPublic,
     autoCloseAt,
-    ownerTierAtCreation: tier
+    ownerTierAtCreation: tier,
   });
 
   // Update user's room creation tracking
@@ -88,20 +108,22 @@ const createRoom = async (userId, roomData) => {
 
   await user.save();
 
-  console.log(`Room created by ${user.displayName} (${tier}): ${room._id}, type: ${roomType}, autoCloseAt: ${autoCloseAt}`);
+  console.log(
+    `Room created by ${user.displayName} (${tier}): ${room._id}, type: ${roomType}, autoCloseAt: ${autoCloseAt}`,
+  );
 
   return room;
 };
 
 /**
  * Close a room and clear owner's activePersonalRoomId
- * @param {string} roomId 
+ * @param {string} roomId
  * @param {string} reason - Reason for closing ('manual', 'auto_expired', 'admin')
  */
-const closeRoom = async (roomId, reason = 'manual') => {
+const closeRoom = async (roomId, reason = "manual") => {
   const room = await Room.findById(roomId);
-  if (!room) throw new Error('Room not found');
-  if (!room.isActive) return { message: 'Room already closed' };
+  if (!room) throw new Error("Room not found");
+  if (!room.isActive) return { message: "Room already closed" };
 
   room.isActive = false;
   room.closedAt = new Date();
@@ -119,50 +141,54 @@ const closeRoom = async (roomId, reason = 'manual') => {
   // End all active sessions in this room
   await StudySession.updateMany(
     { room: roomId, endTime: null },
-    { $set: { endTime: new Date(), isCompleted: true } }
+    { $set: { endTime: new Date(), isCompleted: true } },
   );
 
   // Clear currentRoomId for all participants
   await User.updateMany(
     { currentRoomId: roomId },
-    { $set: { currentRoomId: null } }
+    { $set: { currentRoomId: null } },
   );
 
   console.log(`Room ${roomId} closed. Reason: ${reason}`);
 
-  return { message: 'Room closed', reason };
+  return { message: "Room closed", reason };
 };
 
 const getPublicRooms = async (query = {}) => {
-  // Can add pagination and filtering here
+  // Search ALL active rooms (public + private) - password-protected rooms will show in search
+  // Users can find any room by name, but will need password to join private rooms
   return await Room.find({
-    isPublic: true,
-    isActive: true,
-    ...query
+    isActive: true, // Only show active rooms (not closed)
+    ...query,
   })
-    .populate('owner', 'displayName avatar')
-    .populate('category', 'name')
-    .select('-password');
+    .populate("owner", "displayName avatar")
+    .populate("category", "name")
+    .populate("activeParticipants", "displayName avatar")
+    .select("+password") // Include password field to check if room has password
+    .sort("-createdAt"); // Newest rooms first
 };
 
 const getRoomById = async (roomId) => {
   const room = await Room.findById(roomId)
-    .populate('owner', 'displayName avatar')
-    .populate('activeParticipants', 'displayName avatar');
-  if (!room) throw new Error('Room not found');
+    .populate("owner", "displayName avatar")
+    .populate("activeParticipants", "displayName avatar");
+  if (!room) throw new Error("Room not found");
   return room;
 };
 
 const joinRoom = async (roomId, userId, password) => {
   const cleanId = roomId.trim();
-  console.log('Service joinRoom called:', { roomId: cleanId, userId });
+  console.log("Service joinRoom called:", { roomId: cleanId, userId });
 
   // Get user first for all checks
   const user = await User.findById(userId);
-  if (!user) throw new Error('User not found');
+  if (!user) throw new Error("User not found");
 
   if (user.isLocked || user.isBlocked) {
-    throw new Error('Tài khoản của bạn đang bị khóa. Vui lòng liên hệ quản trị viên.');
+    throw new Error(
+      "Tài khoản của bạn đang bị khóa. Vui lòng liên hệ quản trị viên.",
+    );
   }
 
   // Reset daily stats if new day
@@ -170,7 +196,9 @@ const joinRoom = async (roomId, userId, password) => {
 
   // === RESTRICTION 1: Single Room Participation (System-wide) ===
   if (user.currentRoomId && user.currentRoomId.toString() !== cleanId) {
-    throw new Error('Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước khi tham gia phòng mới.');
+    throw new Error(
+      "Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước khi tham gia phòng mới.",
+    );
   }
 
   // === RESTRICTION 2: Check join eligibility based on daily study time ===
@@ -181,23 +209,25 @@ const joinRoom = async (roomId, userId, password) => {
 
   let room;
   try {
-    room = await Room.findById(cleanId);
+    room = await Room.findById(cleanId).select("+password"); // Include password for verification
   } catch (e) {
     throw new Error(`Invalid Room ID format: ${cleanId}`);
   }
 
   if (!room) {
-    console.log('Service joinRoom: Room not found');
+    console.log("Service joinRoom: Room not found");
     throw new Error(`Room not found: ${cleanId}`);
   }
   if (!room.isActive) {
-    throw new Error('Phòng này đã đóng hoặc không còn hoạt động.');
+    throw new Error("Phòng này đã đóng hoặc không còn hoạt động.");
   }
 
-  // Check Password
-  if (!room.isPublic) {
-    if (room.password !== password && room.owner.toString() !== userId) {
-      throw new Error('Invalid room password');
+  // Check Password - for both public and private rooms
+  if (room.password) {
+    // Room has password - need to verify
+    const isOwner = room.owner?.toString() === userId;
+    if (!isOwner && room.password !== password) {
+      throw new Error("Sai mật khẩu phòng. Vui lòng thử lại.");
     }
   }
 
@@ -205,18 +235,23 @@ const joinRoom = async (roomId, userId, password) => {
 
   // Check Capacity
   if (room.activeParticipants.length >= room.maxParticipants) {
-    const alreadyJoined = room.activeParticipants.some(id => id.toString() === userId.toString());
+    const alreadyJoined = room.activeParticipants.some(
+      (id) => id.toString() === userId.toString(),
+    );
     if (!alreadyJoined) {
-      const premiumMessage = tier === 'FREE' && room.maxParticipants === 30
-        ? ' Nâng cấp HOCA+ để tạo phòng không giới hạn thành viên!'
-        : '';
-      throw new Error(`Phòng đã đầy (${room.maxParticipants} người).${premiumMessage}`);
+      const premiumMessage =
+        tier === "FREE" && room.maxParticipants === 30
+          ? " Nâng cấp HOCA+ để tạo phòng không giới hạn thành viên!"
+          : "";
+      throw new Error(
+        `Phòng đã đầy (${room.maxParticipants} người).${premiumMessage}`,
+      );
     }
   }
 
   // Add to active participants
   await Room.findByIdAndUpdate(cleanId, {
-    $addToSet: { activeParticipants: userId }
+    $addToSet: { activeParticipants: userId },
   });
 
   // === Set user's currentRoomId and session tracking ===
@@ -229,12 +264,16 @@ const joinRoom = async (roomId, userId, password) => {
   await user.save();
 
   // Start Study Session
-  let session = await StudySession.findOne({ user: userId, room: roomId, endTime: null });
+  let session = await StudySession.findOne({
+    user: userId,
+    room: roomId,
+    endTime: null,
+  });
   if (!session) {
     session = await StudySession.create({
       user: userId,
       room: roomId,
-      startTime: new Date()
+      startTime: new Date(),
     });
   }
 
@@ -244,19 +283,25 @@ const joinRoom = async (roomId, userId, password) => {
   return {
     room,
     session,
-    remainingMinutes: timeStatus.remainingMinutes
+    remainingMinutes: timeStatus.remainingMinutes,
   };
 };
 
 const leaveRoom = async (roomId, userId) => {
   const room = await Room.findById(roomId);
   if (room) {
-    room.activeParticipants = room.activeParticipants.filter(id => id.toString() !== userId);
+    room.activeParticipants = room.activeParticipants.filter(
+      (id) => id.toString() !== userId,
+    );
     await room.save();
   }
 
   // End Session
-  const session = await StudySession.findOne({ user: userId, room: roomId, endTime: null });
+  const session = await StudySession.findOne({
+    user: userId,
+    room: roomId,
+    endTime: null,
+  });
   if (session) {
     session.endTime = new Date();
     const duration = (session.endTime - session.startTime) / 60000; // minutes
@@ -274,12 +319,13 @@ const leaveRoom = async (roomId, userId) => {
     user.currentRoomId = null;
     user.currentSessionStartTime = null;
     if (session) {
-      user.todayRoomMinutes = (user.todayRoomMinutes || 0) + (session.duration || 0);
+      user.todayRoomMinutes =
+        (user.todayRoomMinutes || 0) + (session.duration || 0);
     }
     await user.save();
   }
 
-  return { message: 'Left room' };
+  return { message: "Left room" };
 };
 
 const updateUserStats = async (userId, minutes) => {
@@ -292,7 +338,7 @@ const updateUserStats = async (userId, minutes) => {
     user.lastStudyDate = new Date();
     await user.save();
   } catch (err) {
-    console.error('Error updating stats', err);
+    console.error("Error updating stats", err);
   }
 };
 
@@ -302,18 +348,18 @@ const updateUserStats = async (userId, minutes) => {
 const getExpiredRooms = async () => {
   return await Room.find({
     isActive: true,
-    autoCloseAt: { $lte: new Date() }
-  }).populate('owner', 'displayName');
+    autoCloseAt: { $lte: new Date() },
+  }).populate("owner", "displayName");
 };
 
 const getUserRooms = async (userId) => {
   return await Room.find({
     owner: userId,
-    isActive: true
+    isActive: true,
   })
-    .populate('owner', 'displayName avatar')
-    .populate('category', 'name')
-    .sort('-createdAt');
+    .populate("owner", "displayName avatar")
+    .populate("category", "name")
+    .sort("-createdAt");
 };
 
 module.exports = {
@@ -322,8 +368,7 @@ module.exports = {
   getPublicRooms,
   getRoomById,
   joinRoom,
-  joinRoom,
   leaveRoom,
   getExpiredRooms,
-  getUserRooms
+  getUserRooms,
 };

@@ -187,9 +187,19 @@ const registerRoomHandlers = (io, socket) => {
     try {
       if (!roomId) throw new Error("Room ID is required");
 
+      console.log(
+        `[JOIN] User ${userId} (${socket.user.displayName}) attempting to join room ${roomId}`,
+      );
+
       const result = await joinRoom(roomId, userId, password);
 
       socket.join(roomId);
+
+      console.log(`[JOIN] User ${userId} successfully joined room ${roomId}`);
+      console.log(
+        `[JOIN] Sockets now in room:`,
+        await io.in(roomId).allSockets(),
+      );
 
       // Get all sockets in this room to build online users list
       const socketsInRoom = await io.in(roomId).fetchSockets();
@@ -289,6 +299,10 @@ const registerRoomHandlers = (io, socket) => {
         `User ${userId} (${tier}) joined room ${roomId}, roomType: ${room?.roomType}`,
       );
     } catch (error) {
+      console.error(
+        `[JOIN ERROR] User ${userId} failed to join room ${roomId}:`,
+        error.message,
+      );
       socket.emit("error", { message: error.message });
     }
   });
@@ -334,21 +348,36 @@ const registerRoomHandlers = (io, socket) => {
 
   const handleLeave = async (roomId) => {
     try {
+      console.log(
+        `[LEAVE] User ${userId} (${socket.user.displayName}) leaving room ${roomId}`,
+      );
+
       await leaveRoom(roomId, userId);
       socket.leave(roomId);
+
+      console.log(`[LEAVE] Socket ${socket.id} left room ${roomId}`);
+
+      // Notify others that user left
       socket.to(roomId).emit("user-left", {
         userId,
         userName: socket.user.displayName,
         socketId: socket.id,
       });
 
-      // Update online users list for remaining users
+      // Update online users list for remaining users AFTER socket left
       const socketsInRoom = await io.in(roomId).fetchSockets();
       const onlineUsers = socketsInRoom.map((s) => ({
         userId: s.user?.id,
         userName: s.user?.displayName || "User",
         socketId: s.id,
       }));
+
+      console.log(
+        `[LEAVE] Remaining users in room ${roomId}:`,
+        onlineUsers.length,
+      );
+
+      // Broadcast updated user list to remaining users only
       io.to(roomId).emit("room-users", onlineUsers);
 
       // Check and unlock badges after leaving room (study time was recorded)
@@ -443,16 +472,39 @@ const registerRoomHandlers = (io, socket) => {
       stickerId,
       mentions = [],
     }) => {
-      // Chat only for MONTHLY, YEARLY, LIFETIME or ADMIN
-      const tier = socket.user.subscriptionTier || "FREE";
-      const canChat = tier !== "FREE" || socket.user.role === "ADMIN";
+      // ✅ DEBUG: Log incoming message
+      console.log(
+        `[CHAT] User ${socket.user.displayName} (${userId}) sent message in room ${roomId}: "${message || content}"`,
+      );
 
-      if (!canChat) {
-        socket.emit("chat-error", {
-          message:
-            "Tính năng chat chỉ dành cho gói HOCA+ Tháng trở lên. Nâng cấp ngay!",
-        });
-        return;
+      // ✅ CHANGED: Allow ALL users to chat (FREE + PREMIUM + ADMIN)
+      // Chat is now available for everyone!
+      // const tier = socket.user.subscriptionTier || "FREE";
+      // const canChat = tier !== "FREE" || socket.user.role === "ADMIN";
+
+      // if (!canChat) {
+      //   socket.emit("chat-error", {
+      //     message:
+      //       "Tính năng chat chỉ dành cho gói HOCA+ Tháng trở lên. Nâng cấp ngay!",
+      //   });
+      //   return;
+      // }
+
+      // Enforce chat ban (violation escalation)
+      try {
+        const { isChatBanned } = require("../services/moderation.service");
+        const freshUser = await User.findById(userId).select("chatBannedUntil");
+        if (isChatBanned(freshUser)) {
+          const until = new Date(freshUser.chatBannedUntil).toLocaleString(
+            "vi-VN",
+          );
+          socket.emit("chat-error", {
+            message: `Bạn đang bị tạm khóa chat do vi phạm quy tắc. Mở lại sau: ${until}`,
+          });
+          return;
+        }
+      } catch (e) {
+        console.error("Chat ban check error:", e.message);
       }
 
       const displayName = socket.user.displayName || "User";
@@ -469,8 +521,14 @@ const registerRoomHandlers = (io, socket) => {
           mentions,
         });
 
-        // Populate sender for consistency if needed, but we have user info in socket
-        // Just broadcasting needed fields is faster
+        // ✅ DEBUG: Log before broadcast
+        console.log(
+          `[CHAT] Broadcasting message ${savedMessage._id} to room ${roomId}`,
+        );
+        console.log(
+          `[CHAT] Sockets in room:`,
+          await io.in(roomId).allSockets(),
+        );
 
         io.to(roomId).emit("chat-message", {
           _id: savedMessage._id,
@@ -484,6 +542,9 @@ const registerRoomHandlers = (io, socket) => {
           mentions,
           timestamp: savedMessage.createdAt,
         });
+
+        // ✅ DEBUG: Confirm broadcast
+        console.log(`[CHAT] Message broadcasted successfully`);
 
         // AI Bot Auto-Reply Logic
         if (
