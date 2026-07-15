@@ -62,6 +62,8 @@ const startServer = async () => {
           const staticAllowed = [
             "http://localhost:3000",
             "http://localhost:3001",
+            "https://localhost",
+            "capacitor://localhost",
             "https://hoca.asia",
             "https://www.hoca.asia",
             "https://hoca-fe.vercel.app",

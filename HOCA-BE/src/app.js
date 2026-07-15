@@ -46,6 +46,8 @@ const buildApp = async () => {
       const allowedOrigins = [
         "http://localhost:3000",
         "http://localhost:3001",
+        "https://localhost",
+        "capacitor://localhost",
         "https://hoca.asia",
         "https://www.hoca.asia",
         "https://hoca-six.vercel.app",
