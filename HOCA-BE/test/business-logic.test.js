@@ -109,11 +109,13 @@ test('login returns requiresTwoFactor when 2FA is enabled', () => {
   assert.match(authController, /challengeToken/);
 });
 
-test('register sets accountStatus to INACTIVE and requires OTP', () => {
+test('register activates account immediately and returns session tokens', () => {
   const root = path.join(__dirname, '..', 'src');
   const authController = fs.readFileSync(path.join(root, 'controllers', 'auth.controller.js'), 'utf8');
-  assert.match(authController, /requiresVerification:\s*true/);
-  assert.match(authController, /otpSent/);
+  const authService = fs.readFileSync(path.join(root, 'services', 'auth.service.js'), 'utf8');
+  assert.match(authController, /requiresVerification:\s*false/);
+  assert.match(authController, /refreshToken/);
+  assert.match(authService, /accountStatus:\s*"ACTIVE"/);
 });
 
 // ---- Rank / Leaderboard Tests ----

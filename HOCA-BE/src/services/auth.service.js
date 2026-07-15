@@ -135,9 +135,38 @@ const toRegistrationUser = (user) => ({
   subscriptionTier: user.subscriptionTier,
 });
 
-const registerUser = async (userData) => {
+const registerUser = async (userData, context = {}) => {
   const { displayName, password } = userData;
   const email = userData.email.trim().toLowerCase();
+
+  // Email OTP is intentionally disabled: registration activates the account immediately.
+  const directExisting = await User.findOne({ email }).select("+password");
+  if (directExisting) {
+    const passwordMatches = Boolean(directExisting.password) &&
+      (await directExisting.matchPassword(password));
+    if (directExisting.accountStatus === "INACTIVE" && passwordMatches) {
+      directExisting.accountStatus = "ACTIVE";
+      directExisting.verificationCode = undefined;
+      directExisting.verificationCodeExpires = undefined;
+      directExisting.verificationCodeSentAt = undefined;
+      await directExisting.save({ validateBeforeSave: false });
+      const tokens = await issueSessionTokens(directExisting, context);
+      return { user: toRegistrationUser(directExisting), ...tokens, message: "Registration successful." };
+    }
+    const existingError = new Error("Email này đã được sử dụng. Vui lòng đăng nhập.");
+    existingError.statusCode = 409;
+    existingError.code = "ACCOUNT_EXISTS";
+    throw existingError;
+  }
+
+  const directUser = await User.create({
+    displayName,
+    email,
+    password,
+    accountStatus: "ACTIVE",
+  });
+  const directTokens = await issueSessionTokens(directUser, context);
+  return { user: toRegistrationUser(directUser), ...directTokens, message: "Registration successful." };
 
   // Check if user exists
   const userExists = await User.findOne({ email }).select(

@@ -12,18 +12,17 @@ const register = async (req, reply) => {
       return reply.code(400).send({ message: "Password must be at least 6 characters" });
     }
 
-    const result = await authService.registerUser({
-      displayName,
-      email,
-      password,
-    });
+    const result = await authService.registerUser(
+      { displayName, email, password },
+      { userAgent: req.headers["user-agent"], ip: req.ip },
+    );
 
     reply.code(201).send({
       message: result.message,
       user: result.user,
-      otpSent: result.otpSent,
-      developmentCode: result.developmentCode,
-      requiresVerification: true,
+      token: result.token,
+      refreshToken: result.refreshToken,
+      requiresVerification: false,
     });
   } catch (error) {
     reply.code(error.statusCode || 400).send({
