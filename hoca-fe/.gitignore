@@ -1,0 +1,4 @@
+.vercel
+android/hoca-release.jks
+android/app/hoca-release.jks
+android/release-signing.properties
