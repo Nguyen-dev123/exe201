@@ -38,6 +38,11 @@ async function aiRoutes(fastify, options) {
      * @access  Private
      */
     fastify.get('/usage', aiController.getUsage);
+    fastify.get('/conversations', aiController.listConversations);
+    fastify.get('/conversations/:id', aiController.getConversation);
+    fastify.patch('/conversations/:id', aiController.updateConversation);
+    fastify.delete('/conversations/:id', aiController.deleteConversation);
+    fastify.patch('/conversations/:id/messages/:messageId/feedback', aiController.rateMessage);
 }
 
 module.exports = aiRoutes;

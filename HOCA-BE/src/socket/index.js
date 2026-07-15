@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken'); // Use standard jwt for socket
 const { JWT_SECRET } = require('../config/env');
 const registerRoomHandlers = require('./room.handler');
 const User = require('../models/User');
+const AuthSession = require('../models/AuthSession');
 
 const { calculateUserRank } = require('../services/rank.service');
 
@@ -17,7 +18,7 @@ const setupSocket = (io) => {
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       // Fetch full user from DB
-      const user = await User.findById(decoded.id).select('displayName avatar role subscriptionTier subscriptionExpiry totalStudyMinutes isLocked isBlocked');
+      const user = await User.findById(decoded.id).select('displayName avatar role subscriptionTier subscriptionExpiry totalStudyMinutes isLocked isBlocked +authVersion');
       if (!user) {
         console.error('[Socket Auth] User not found for id:', decoded.id);
         return next(new Error('User not found'));
@@ -26,6 +27,18 @@ const setupSocket = (io) => {
       if (user.isLocked || user.isBlocked) {
         console.error('[Socket Auth] User blocked/locked:', decoded.id);
         return next(new Error('Account locked'));
+      }
+      if (Number(decoded.authVersion || 0) !== Number(user.authVersion || 0)) {
+        return next(new Error('Session revoked'));
+      }
+      if (decoded.sessionId) {
+        const session = await AuthSession.exists({
+          user: user._id,
+          sessionId: decoded.sessionId,
+          revokedAt: null,
+          expiresAt: { $gt: new Date() },
+        });
+        if (!session) return next(new Error('Session revoked'));
       }
 
       // Calculate effective tier (check expiry for MONTHLY/YEARLY)
@@ -63,6 +76,7 @@ const setupSocket = (io) => {
 
   io.on('connection', (socket) => {
     console.log(`User connected: ${socket.user.id} | Socket ID: ${socket.id}`);
+    socket.join(`user:${socket.user.id}`);
 
     // Send initial connection confirmation
     socket.emit('connected', {

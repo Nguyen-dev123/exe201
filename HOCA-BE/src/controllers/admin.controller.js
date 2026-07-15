@@ -4,12 +4,43 @@ const RoomCategory = require('../models/RoomCategory');
 const Transaction = require('../models/Transaction');
 const SystemConfig = require('../models/SystemConfig');
 const Report = require('../models/Report');
+const AIUsage = require('../models/AIUsage');
+const StudySession = require('../models/StudySession');
+const Notification = require('../models/Notification');
+const AdminAuditLog = require('../models/AdminAuditLog');
+const roomService = require('../services/room.service');
+const subscriptionService = require('../services/subscription.service');
 const moment = require('moment');
+
+const AI_DAILY_LIMIT = 15;
+const getVietnamDateKey = (date = new Date()) =>
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date);
+
+const writeAuditLog = async (req, action, details = {}) => {
+  try {
+    await AdminAuditLog.create({
+      admin: req.user._id,
+      action,
+      targetType: details.targetType || 'SYSTEM',
+      targetId: details.targetId?.toString() || '',
+      targetLabel: details.targetLabel || '',
+      metadata: details.metadata || {},
+      ip: req.ip || req.headers?.['x-forwarded-for'] || ''
+    });
+  } catch (error) {
+    req.log?.error?.(error, 'Unable to write admin audit log');
+  }
+};
 
 // User Management
 const getAllUsers = async (req, reply) => {
   try {
-    const { page = 1, limit = 10, search, sortBy = 'createdAt', order = 'desc' } = req.query;
+    const { page = 1, limit = 10, search, sortBy = 'createdAt', order = 'desc', createdWithinDays } = req.query;
     const query = {};
     if (search) {
       query.$or = [
@@ -17,18 +48,70 @@ const getAllUsers = async (req, reply) => {
         { email: { $regex: search, $options: 'i' } }
       ];
     }
+    if (createdWithinDays !== undefined) {
+      const days = Math.min(365, Math.max(1, parseInt(createdWithinDays, 10) || 7));
+      query.createdAt = { $gte: moment().subtract(days, 'days').toDate() };
+    }
 
     const sortOptions = {};
     sortOptions[sortBy] = order === 'asc' ? 1 : -1;
 
-    const users = await User.find(query)
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit))
-      .sort(sortOptions);
+    const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 10));
+    const safePage = Math.max(1, parseInt(page, 10) || 1);
+    const [users, total] = await Promise.all([
+      User.find(query)
+        .select([
+          'displayName',
+          'email',
+          'avatar',
+          'role',
+          'totalStudyMinutes',
+          'subscriptionTier',
+          'subscriptionStartDate',
+          'subscriptionExpiry',
+          'isLocked',
+          'isBlocked',
+          'lockReason',
+          'currentRoomId',
+          'createdAt'
+        ].join(' '))
+        .populate('currentRoomId', 'name roomType isActive')
+        .skip((safePage - 1) * safeLimit)
+        .limit(safeLimit)
+        .sort(sortOptions)
+        .lean(),
+      User.countDocuments(query)
+    ]);
+    const today = getVietnamDateKey();
+    const usageRows = await AIUsage.find({
+      user: { $in: users.map((user) => user._id) },
+      date: today
+    }).select('user freeMainQuestionCount questionCount');
+    const usageByUser = new Map(
+      usageRows.map((usage) => [usage.user.toString(), usage])
+    );
 
-    const total = await User.countDocuments(query);
+    const enhancedUsers = users.map((user) => {
+      const usage = usageByUser.get(user._id.toString());
+      const used = usage?.freeMainQuestionCount || 0;
+      return {
+        ...user,
+        effectiveSubscriptionTier: subscriptionService.getEffectiveTier(user),
+        aiUsageToday: {
+          used,
+          limit: AI_DAILY_LIMIT,
+          remaining: Math.max(0, AI_DAILY_LIMIT - used),
+          totalQuestions: usage?.questionCount || 0
+        }
+      };
+    });
 
-    reply.send({ users, total, page, pages: Math.ceil(total / limit) });
+    reply.send({
+      users: enhancedUsers,
+      total,
+      page: safePage,
+      pages: Math.ceil(total / safeLimit)
+    });
   } catch (error) {
     reply.code(500).send({ message: error.message });
   }
@@ -68,6 +151,13 @@ const toggleLockUser = async (req, reply) => {
 
     await user.save();
 
+    await writeAuditLog(req, user.isLocked ? 'LOCK_USER' : 'UNLOCK_USER', {
+      targetType: 'USER',
+      targetId: user._id,
+      targetLabel: user.displayName,
+      metadata: { reason: user.lockReason || '' }
+    });
+
     reply.send({ message: `User ${user.isLocked ? 'locked' : 'unlocked'}`, user });
   } catch (error) {
     reply.code(500).send({ message: error.message });
@@ -105,12 +195,40 @@ const getSystemStats = async (req, reply) => {
       filter.createdAt = { $gte: start.toDate() };
     }
 
-    const [totalUsers, totalRooms, totalRevenue] = await Promise.all([
+    const today = getVietnamDateKey();
+    const [totalUsers, totalRooms, totalRevenue, aiUsageToday] = await Promise.all([
       User.countDocuments(filter),
       Room.countDocuments(filter),
       Transaction.aggregate([
         { $match: { status: 'COMPLETED', ...filter } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]),
+      AIUsage.aggregate([
+        { $match: { date: today } },
+        {
+          $group: {
+            _id: null,
+            questions: { $sum: { $ifNull: ['$freeMainQuestionCount', 0] } },
+            activeUsers: {
+              $sum: {
+                $cond: [
+                  { $gt: [{ $ifNull: ['$freeMainQuestionCount', 0] }, 0] },
+                  1,
+                  0
+                ]
+              }
+            },
+            usersAtLimit: {
+              $sum: {
+                $cond: [
+                  { $gte: [{ $ifNull: ['$freeMainQuestionCount', 0] }, AI_DAILY_LIMIT] },
+                  1,
+                  0
+                ]
+              }
+            }
+          }
+        }
       ])
     ]);
 
@@ -130,7 +248,8 @@ const getSystemStats = async (req, reply) => {
       totalUsers,
       totalRooms,
       revenue,
-      newUsersLast7Days: newUsers // This will match totalUsers if we use the same filter.
+      newUsersLast7Days: newUsers,
+      aiToday: aiUsageToday[0] || { questions: 0, activeUsers: 0, usersAtLimit: 0 }
     });
   } catch (error) {
     reply.code(500).send({ message: error.message });
@@ -140,8 +259,11 @@ const getSystemStats = async (req, reply) => {
 // Room Management
 const getAllRooms = async (req, reply) => {
   try {
-    const { page = 1, limit = 12, search, filter } = req.query;
-    const query = { isActive: true }; // Default to active rooms
+    const { page = 1, limit = 12, search, filter, status = 'active' } = req.query;
+    const query = {};
+
+    if (status === 'active') query.isActive = true;
+    if (status === 'closed') query.isActive = false;
 
     if (search) {
       query.$or = [
@@ -155,28 +277,40 @@ const getAllRooms = async (req, reply) => {
       // query.reports = { $gt: 0 }; 
     }
 
-    const rooms = await Room.find(query)
-      .populate('owner', 'displayName avatar')
-      .populate('activeParticipants', 'displayName avatar') // Inefficient for large scale but fine for now
-      .sort('-createdAt')
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit));
+    const safeLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 12));
+    const safePage = Math.max(1, parseInt(page, 10) || 1);
+    const [rooms, total] = await Promise.all([
+      Room.find(query)
+        .populate('owner', 'displayName avatar')
+        .sort('-createdAt')
+        .skip((safePage - 1) * safeLimit)
+        .limit(safeLimit),
+      Room.countDocuments(query)
+    ]);
 
-    const total = await Room.countDocuments(query);
+    // Fetch report counts in one aggregation instead of one query per room.
+    const roomIds = rooms.map((room) => room._id);
+    const reportCounts = roomIds.length
+      ? await Report.aggregate([
+          { $match: { room: { $in: roomIds }, status: 'PENDING' } },
+          { $group: { _id: '$room', count: { $sum: 1 } } }
+        ])
+      : [];
+    const reportCountByRoom = new Map(
+      reportCounts.map((item) => [item._id.toString(), item.count])
+    );
 
-    // Enhance with "mock" report data/flags as requested by UI
-    // Enhance with REAL report data
-    const enhancedRooms = await Promise.all(rooms.map(async (room) => {
-      const reportCount = await Report.countDocuments({ room: room._id, status: 'PENDING' });
+    const enhancedRooms = rooms.map((room) => {
+      const reportCount = reportCountByRoom.get(room._id.toString()) || 0;
       return {
         ...room.toObject(),
-        reportCount, // Real count
-        isNSFW: reportCount > 5, // Simple logic: high reports = potential NSFW/Risk
+        reportCount,
+        isNSFW: reportCount > 5,
         isTrending: room.activeParticipants.length > 10
       };
-    }));
+    });
 
-    reply.send({ rooms: enhancedRooms, total, page });
+    reply.send({ rooms: enhancedRooms, total, page: safePage });
   } catch (error) {
     reply.code(500).send({ message: error.message });
   }
@@ -211,6 +345,138 @@ const getRevenueStats = async (req, reply) => {
     let endDateFilter;
     const now = moment();
 
+    // The Admin overview and revenue screen both request the all-time snapshot.
+    // Serve that common path with one faceted aggregation instead of roughly
+    // twenty sequential database round-trips.
+    if (
+      timeframe === 'all' &&
+      !filterMonth &&
+      !filterYear &&
+      !queryStartDate &&
+      !queryEndDate
+    ) {
+      const startOfYear = moment().startOf('year').toDate();
+      const startOfMonth = moment().startOf('month').toDate();
+      const startOfWeek = moment().startOf('week').toDate();
+      const chartStart = moment().subtract(11, 'months').startOf('month').toDate();
+
+      const [aggregationResult, transactions, totalUsers] = await Promise.all([
+        Transaction.aggregate([
+          { $match: { status: 'COMPLETED' } },
+          {
+            $facet: {
+              summary: [
+                {
+                  $group: {
+                    _id: null,
+                    all: { $sum: '$amount' },
+                    year: {
+                      $sum: { $cond: [{ $gte: ['$createdAt', startOfYear] }, '$amount', 0] }
+                    },
+                    month: {
+                      $sum: { $cond: [{ $gte: ['$createdAt', startOfMonth] }, '$amount', 0] }
+                    },
+                    week: {
+                      $sum: { $cond: [{ $gte: ['$createdAt', startOfWeek] }, '$amount', 0] }
+                    }
+                  }
+                }
+              ],
+              tierRevenue: [
+                { $match: { type: 'PREMIUM_SUBSCRIPTION' } },
+                {
+                  $lookup: {
+                    from: 'pricingplans',
+                    localField: 'plan',
+                    foreignField: '_id',
+                    as: 'planInfo'
+                  }
+                },
+                { $unwind: { path: '$planInfo', preserveNullAndEmptyArrays: true } },
+                {
+                  $group: {
+                    _id: '$planInfo.tier',
+                    total: { $sum: '$amount' },
+                    count: { $sum: 1 }
+                  }
+                }
+              ],
+              chart: [
+                { $match: { createdAt: { $gte: chartStart } } },
+                {
+                  $group: {
+                    _id: {
+                      month: {
+                        $dateToString: {
+                          format: '%Y-%m',
+                          date: '$createdAt',
+                          timezone: 'Asia/Ho_Chi_Minh'
+                        }
+                      },
+                      type: '$type'
+                    },
+                    total: { $sum: '$amount' }
+                  }
+                }
+              ]
+            }
+          }
+        ]),
+        Transaction.find({ status: 'COMPLETED' })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .populate('user', 'displayName')
+          .lean(),
+        User.countDocuments()
+      ]);
+
+      const facets = aggregationResult[0] || {};
+      const summary = facets.summary?.[0] || { all: 0, year: 0, month: 0, week: 0 };
+      const tierRows = facets.tierRevenue || [];
+      const tierRevenue = {
+        MONTHLY: tierRows.find((item) => item._id === 'MONTHLY') || { total: 0, count: 0 },
+        YEARLY: tierRows.find((item) => item._id === 'YEARLY') || { total: 0, count: 0 },
+        LIFETIME: tierRows.find((item) => item._id === 'LIFETIME') || { total: 0, count: 0 }
+      };
+      const chartRows = facets.chart || [];
+      const chartData = Array.from({ length: 12 }, (_, index) => {
+        const date = moment().subtract(11 - index, 'months');
+        const monthKey = date.format('YYYY-MM');
+        const premium = chartRows.find(
+          (item) => item._id.month === monthKey && item._id.type === 'PREMIUM_SUBSCRIPTION'
+        )?.total || 0;
+        const ad = chartRows.find(
+          (item) => item._id.month === monthKey && item._id.type === 'AD_REVENUE'
+        )?.total || 0;
+        return { day: date.format('MM/YYYY'), premium, ad };
+      });
+      const formattedTransactions = transactions.map((transaction) => ({
+        id: transaction.txnRef || transaction._id.toString().substring(0, 8),
+        type: transaction.type,
+        user: transaction.user?.displayName || 'Unknown',
+        amount: transaction.amount,
+        date: transaction.createdAt,
+        status: transaction.status
+      }));
+      const totalRevenue = summary.all || 0;
+      const premiumSales = Object.values(tierRevenue).reduce(
+        (total, item) => total + (item.total || 0),
+        0
+      );
+
+      return reply.send({
+        summary,
+        totalRevenue,
+        premiumSales,
+        adRevenue: chartRows
+          .filter((item) => item._id.type === 'AD_REVENUE')
+          .reduce((total, item) => total + item.total, 0),
+        arpu: totalUsers > 0 ? Math.round(totalRevenue / totalUsers) : 0,
+        tierRevenue,
+        chartData,
+        transactions: formattedTransactions
+      });
+    }
     // Custom date range filter (from date - to date)
     if (queryStartDate && queryEndDate) {
       startDate = moment(queryStartDate).startOf('day');
@@ -790,12 +1056,15 @@ const getAnalytics = async (req, reply) => {
     }
 
     if (type === 'technical') {
-      // Mock system stats (Node.js doesn't expose host CPU easily without lib)
-      // Retaining mock for technical as it requires 'os-utils' or similar
+      const os = require('os');
+      const cpuCount = Math.max(1, os.cpus().length);
+      const serverCpu = Math.min(100, Math.round((os.loadavg()[0] / cpuCount) * 100));
+      const serverRam = Math.round(((os.totalmem() - os.freemem()) / os.totalmem()) * 100);
       return reply.send({
-        serverCpu: Math.floor(Math.random() * 30) + 10,
-        serverRam: Math.floor(Math.random() * 40) + 30,
-        bandwidth: Math.floor(Math.random() * 200) + 300
+        serverCpu,
+        serverRam,
+        processMemoryMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+        uptimeSeconds: Math.floor(process.uptime())
       });
     }
 
@@ -808,15 +1077,252 @@ const getAnalytics = async (req, reply) => {
 const closeRoom = async (req, reply) => {
   try {
     const { id } = req.params;
-    const room = await Room.findById(id);
-    if (!room) return reply.code(404).send({ message: 'Room not found' });
+    const result = await roomService.closeRoom(id, 'admin');
 
-    room.isActive = false;
-    await room.save();
+    if (global.io) {
+      global.io.to(id).emit('room-closed', {
+        roomId: id,
+        reason: 'admin',
+        message: 'Phòng đã được quản trị viên đóng.'
+      });
+    }
 
-    // TODO: Notify socket
+    await writeAuditLog(req, 'CLOSE_ROOM', {
+      targetType: 'ROOM',
+      targetId: id
+    });
 
-    reply.send({ message: 'Room closed successfully', room });
+    reply.send({ message: 'Room closed successfully', ...result });
+  } catch (error) {
+    reply.code(error.message === 'Room not found' ? 404 : 500).send({ message: error.message });
+  }
+};
+
+const updateUserSubscription = async (req, reply) => {
+  try {
+    const { id } = req.params;
+    const { tier, expiry } = req.body || {};
+    const allowedTiers = ['FREE', 'MONTHLY', 'YEARLY', 'LIFETIME'];
+
+    if (!allowedTiers.includes(tier)) {
+      return reply.code(400).send({ message: 'Gói thành viên không hợp lệ.' });
+    }
+
+    const user = await User.findById(id);
+    if (!user) return reply.code(404).send({ message: 'User not found' });
+    if (user.role === 'ADMIN') {
+      return reply.code(400).send({ message: 'Tài khoản Admin không cần gán gói thành viên.' });
+    }
+
+    const now = new Date();
+    user.subscriptionTier = tier;
+
+    if (tier === 'FREE') {
+      user.subscriptionStartDate = undefined;
+      user.subscriptionExpiry = undefined;
+    } else {
+      user.subscriptionStartDate = user.subscriptionStartDate || now;
+      if (tier === 'LIFETIME') {
+        user.subscriptionExpiry = undefined;
+      } else if (expiry) {
+        const parsedExpiry = /^\d{4}-\d{2}-\d{2}$/.test(expiry)
+          ? new Date(`${expiry}T23:59:59.999+07:00`)
+          : new Date(expiry);
+        if (Number.isNaN(parsedExpiry.getTime())) {
+          return reply.code(400).send({ message: 'Ngày hết hạn không hợp lệ.' });
+        }
+        user.subscriptionExpiry = parsedExpiry;
+      } else {
+        const durationDays = tier === 'YEARLY' ? 365 : 30;
+        user.subscriptionExpiry = new Date(now.getTime() + durationDays * 86400000);
+      }
+    }
+
+    await user.save();
+    await writeAuditLog(req, 'UPDATE_SUBSCRIPTION', {
+      targetType: 'USER',
+      targetId: user._id,
+      targetLabel: user.displayName,
+      metadata: {
+        tier: user.subscriptionTier,
+        expiry: user.subscriptionExpiry || null
+      }
+    });
+    reply.send({
+      message: 'Đã cập nhật gói thành viên.',
+      user,
+      effectiveTier: subscriptionService.getEffectiveTier(user)
+    });
+  } catch (error) {
+    reply.code(500).send({ message: error.message });
+  }
+};
+
+const resetUserAIUsage = async (req, reply) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id).select('_id displayName');
+    if (!user) return reply.code(404).send({ message: 'User not found' });
+
+    const today = getVietnamDateKey();
+    await AIUsage.findOneAndUpdate(
+      { user: id, date: today },
+      {
+        $set: { freeMainQuestionCount: 0 },
+        $setOnInsert: { questionCount: 0, questions: [] }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    await writeAuditLog(req, 'RESET_AI_USAGE', {
+      targetType: 'USER',
+      targetId: user._id,
+      targetLabel: user.displayName
+    });
+
+    reply.send({ message: `Đã khôi phục 15 lượt AI hôm nay cho ${user.displayName}.` });
+  } catch (error) {
+    reply.code(500).send({ message: error.message });
+  }
+};
+
+const forceLeaveUserRooms = async (req, reply) => {
+  try {
+    const { id } = req.params;
+    const user = await User.findById(id);
+    if (!user) return reply.code(404).send({ message: 'User not found' });
+
+    const roomIds = new Set();
+    if (user.currentRoomId) roomIds.add(user.currentRoomId.toString());
+
+    const roomsContainingUser = await Room.find({ activeParticipants: user._id }).select('_id');
+    roomsContainingUser.forEach((room) => roomIds.add(room._id.toString()));
+
+    for (const roomId of roomIds) {
+      await roomService.leaveRoom(roomId, user._id);
+    }
+
+    await Room.updateMany(
+      { activeParticipants: user._id },
+      { $pull: { activeParticipants: user._id } }
+    );
+
+    const openSessions = await StudySession.find({ user: user._id, endTime: null });
+    const endedAt = new Date();
+    for (const session of openSessions) {
+      session.endTime = endedAt;
+      session.duration = Math.max(
+        0,
+        Math.floor((endedAt.getTime() - session.startTime.getTime()) / 60000)
+      );
+      session.isCompleted = true;
+      await session.save();
+    }
+
+    await User.findByIdAndUpdate(user._id, {
+      $set: { currentRoomId: null, currentSessionStartTime: null }
+    });
+
+    if (global.io) {
+      const sockets = await global.io.fetchSockets();
+      for (const userSocket of sockets) {
+        if (userSocket.user?.id?.toString() !== user._id.toString()) continue;
+        for (const socketRoomId of [...userSocket.rooms]) {
+          if (socketRoomId !== userSocket.id) userSocket.leave(socketRoomId);
+        }
+        userSocket.emit('room-switched', {
+          message: 'Quản trị viên đã kết thúc trạng thái phòng hiện tại của bạn.'
+        });
+      }
+    }
+
+    await writeAuditLog(req, 'FORCE_LEAVE_ROOMS', {
+      targetType: 'USER',
+      targetId: user._id,
+      targetLabel: user.displayName,
+      metadata: { roomsCleared: roomIds.size }
+    });
+
+    reply.send({
+      message: `Đã giải phóng trạng thái phòng của ${user.displayName}.`,
+      roomsCleared: roomIds.size
+    });
+  } catch (error) {
+    reply.code(500).send({ message: error.message });
+  }
+};
+
+const getAuditLogs = async (req, reply) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const action = req.query.action;
+    const query = action ? { action } : {};
+
+    const [logs, total] = await Promise.all([
+      AdminAuditLog.find(query)
+        .populate('admin', 'displayName email avatar')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      AdminAuditLog.countDocuments(query)
+    ]);
+
+    reply.send({ logs, total, page, pages: Math.ceil(total / limit) });
+  } catch (error) {
+    reply.code(500).send({ message: error.message });
+  }
+};
+
+const broadcastNotification = async (req, reply) => {
+  try {
+    const { title, message } = req.body || {};
+    if (!title?.trim() || !message?.trim()) {
+      return reply.code(400).send({ message: 'Tiêu đề và nội dung thông báo là bắt buộc.' });
+    }
+    if (title.trim().length > 120 || message.trim().length > 1000) {
+      return reply.code(400).send({ message: 'Thông báo vượt quá độ dài cho phép.' });
+    }
+
+    const users = await User.find({
+      isLocked: { $ne: true },
+      isBlocked: { $ne: true }
+    }).select('_id');
+
+    if (users.length > 0) {
+      await Notification.insertMany(
+        users.map((user) => ({
+          user: user._id,
+          type: 'SYSTEM',
+          title: title.trim(),
+          message: message.trim(),
+          data: { broadcast: true, sentBy: req.user._id }
+        })),
+        { ordered: false }
+      );
+    }
+
+    if (global.io) {
+      const sockets = await global.io.fetchSockets();
+      sockets.forEach((socket) => {
+        socket.emit('notification', {
+          type: 'SYSTEM',
+          title: title.trim(),
+          message: message.trim()
+        });
+      });
+    }
+
+    await writeAuditLog(req, 'BROADCAST_NOTIFICATION', {
+      targetType: 'SYSTEM',
+      targetLabel: title.trim(),
+      metadata: { recipients: users.length }
+    });
+
+    reply.send({
+      message: `Đã gửi thông báo đến ${users.length} tài khoản.`,
+      recipients: users.length
+    });
   } catch (error) {
     reply.code(500).send({ message: error.message });
   }
@@ -832,15 +1338,19 @@ const getAdminRoomDetails = async (req, reply) => {
 
     if (!room) return reply.code(404).send({ message: 'Room not found' });
 
-    // Calculate session stats for this room (mock or real)
-    // For now, return basic info extended with report count
     const StudySession = require('../models/StudySession');
-    const totalSessions = await StudySession.countDocuments({ room: id });
+    const [totalSessions, reports] = await Promise.all([
+      StudySession.countDocuments({ room: id }),
+      Report.find({ room: id })
+        .sort('-createdAt')
+        .limit(100)
+        .populate('submitter targetUser resolvedBy', 'displayName avatar'),
+    ]);
 
     reply.send({
       ...room.toObject(),
       totalSessions,
-      reports: [] // TODO: Populate reports
+      reports
     });
   } catch (error) {
     reply.code(500).send({ message: error.message });
@@ -849,7 +1359,26 @@ const getAdminRoomDetails = async (req, reply) => {
 
 const createAdminRoom = async (req, reply) => {
   try {
-    const { name, categoryId, timerMode } = req.body;
+    const {
+      name,
+      categoryId,
+      timerMode = 'POMODORO_25_5',
+      roomType = 'SILENT',
+      maxParticipants = 50
+    } = req.body || {};
+
+    if (!name || !name.trim()) {
+      return reply.code(400).send({ message: 'Tên phòng là bắt buộc.' });
+    }
+
+    const allowedRoomTypes = ['SILENT', 'DISCUSSION', 'VIDEO'];
+    const allowedTimerModes = ['POMODORO_25_5', 'POMODORO_50_10', 'POMODORO_90_15'];
+    if (!allowedRoomTypes.includes(roomType)) {
+      return reply.code(400).send({ message: 'Loại phòng không hợp lệ.' });
+    }
+    if (!allowedTimerModes.includes(timerMode)) {
+      return reply.code(400).send({ message: 'Chế độ Pomodoro không hợp lệ.' });
+    }
 
     // Check if category exists if provided
     if (categoryId) {
@@ -858,14 +1387,22 @@ const createAdminRoom = async (req, reply) => {
     }
 
     const room = await Room.create({
-      name,
+      name: name.trim(),
       category: categoryId || null,
       isAdminRoom: true,
       owner: null, // Admin room has no user owner
-      maxParticipants: 50,
-      timerMode: timerMode || 'POMODORO_25_5',
+      maxParticipants: Math.min(999, Math.max(2, Number(maxParticipants) || 50)),
+      timerMode,
+      roomType,
       isPublic: true,
       isActive: true
+    });
+
+    await writeAuditLog(req, 'CREATE_ADMIN_ROOM', {
+      targetType: 'ROOM',
+      targetId: room._id,
+      targetLabel: room.name,
+      metadata: { roomType, timerMode, maxParticipants: room.maxParticipants }
     });
 
     reply.code(201).send(room);
@@ -887,6 +1424,11 @@ const createRoomCategory = async (req, reply) => {
   try {
     const { name, description } = req.body;
     const category = await RoomCategory.create({ name, description });
+    await writeAuditLog(req, 'CREATE_ROOM_CATEGORY', {
+      targetType: 'CATEGORY',
+      targetId: category._id,
+      targetLabel: category.name
+    });
     reply.code(201).send(category);
   } catch (error) {
     reply.code(400).send({ message: error.message });
@@ -935,8 +1477,19 @@ const updateRoomCategory = async (req, reply) => {
 const deleteRoomCategory = async (req, reply) => {
   try {
     const { id } = req.params;
+    const roomsUsingCategory = await Room.countDocuments({ category: id });
+    if (roomsUsingCategory > 0) {
+      return reply.code(409).send({
+        message: `Không thể xóa: danh mục đang được ${roomsUsingCategory} phòng sử dụng.`
+      });
+    }
     const category = await RoomCategory.findByIdAndDelete(id);
     if (!category) return reply.code(404).send({ message: 'Category not found' });
+    await writeAuditLog(req, 'DELETE_ROOM_CATEGORY', {
+      targetType: 'CATEGORY',
+      targetId: category._id,
+      targetLabel: category.name
+    });
     reply.send({ message: 'Category deleted' });
   } catch (error) {
     reply.code(400).send({ message: error.message });
@@ -1006,5 +1559,10 @@ module.exports = {
   getAdminRoomDetails,
   getSystemConfig,
   updateSystemConfig,
-  toggleLockUser
+  toggleLockUser,
+  updateUserSubscription,
+  forceLeaveUserRooms,
+  resetUserAIUsage,
+  getAuditLogs,
+  broadcastNotification
 };

@@ -76,6 +76,10 @@ const updateUserProfile = async (userId, updateData) => {
   if (updateData.avatar) user.avatar = updateData.avatar;
   if (updateData.dailyStudyGoal) user.dailyStudyGoal = updateData.dailyStudyGoal;
   if (typeof updateData.isOnboarded !== 'undefined') user.isOnboarded = updateData.isOnboarded;
+  if (['PUBLIC', 'MEMBERS', 'PRIVATE'].includes(updateData.profileVisibility)) user.profileVisibility = updateData.profileVisibility;
+  if (typeof updateData.showStudyStats === 'boolean') user.showStudyStats = updateData.showStudyStats;
+  if (typeof updateData.searchable === 'boolean') user.searchable = updateData.searchable;
+  if (typeof updateData.notificationEnabled === 'boolean') user.notificationEnabled = updateData.notificationEnabled;
 
   await user.save();
   return user;
@@ -287,15 +291,18 @@ const awardBadge = async (user, name, type, threshold) => {
 
 const getLeaderboard = async () => {
   // Top 10 by XP or Total Minutes? Req says "User with most study time" and "Highest streak"
-  const topStudy = await User.find({ role: 'MEMBER' })
-    .sort({ totalStudyMinutes: -1 })
-    .limit(10)
-    .select('displayName avatar totalStudyMinutes xp');
-
-  const topStreak = await User.find({ role: 'MEMBER' })
-    .sort({ currentStreak: -1 })
-    .limit(10)
-    .select('displayName avatar currentStreak xp');
+  const [topStudy, topStreak] = await Promise.all([
+    User.find({ role: 'MEMBER' })
+      .sort({ totalStudyMinutes: -1 })
+      .limit(10)
+      .select('displayName avatar totalStudyMinutes xp')
+      .lean(),
+    User.find({ role: 'MEMBER' })
+      .sort({ currentStreak: -1 })
+      .limit(10)
+      .select('displayName avatar currentStreak xp')
+      .lean(),
+  ]);
 
   return { topStudy, topStreak };
 };
@@ -421,8 +428,8 @@ const updateVirtualBackground = async (userId, backgroundData) => {
   const user = await User.findById(userId);
   if (!user) throw new Error('User not found');
 
-  // Check if user is premium (required for virtual background)
-  if (!user.isPremium || (user.premiumExpiry && new Date(user.premiumExpiry) < new Date())) {
+  const subscriptionService = require('./subscription.service');
+  if (!subscriptionService.canAccessFeature(user, 'background_preset')) {
     throw new Error('Virtual background is a premium feature. Please upgrade to HOCA+ to unlock this feature.');
   }
 
@@ -520,24 +527,137 @@ const getWeeklyActivity = async (userId) => {
 /**
  * Delete user account permanently
  */
-const deleteAccount = async (userId) => {
-  const user = await User.findById(userId);
-  if (!user) throw new Error('User not found');
+const requestAccountDeletion = async (userId, password) => {
+  const crypto = require('crypto');
+  const emailService = require('./email.service');
+  const user = await User.findById(userId).select(
+    '+password +accountDeletionCode +accountDeletionExpires +accountDeletionAttempts',
+  );
+  if (!user || !password || !(await user.matchPassword(password))) {
+    throw new Error('Mật khẩu không chính xác');
+  }
+  const code = crypto.randomInt(100000, 1000000).toString();
+  user.accountDeletionCode = crypto.createHash('sha256').update(code).digest('hex');
+  user.accountDeletionExpires = new Date(Date.now() + 10 * 60 * 1000);
+  user.accountDeletionAttempts = 0;
+  await user.save({ validateBeforeSave: false });
+  try {
+    await emailService.sendEmail({
+      to: user.email,
+      subject: `${code} là mã xác nhận xóa tài khoản HOCA`,
+      html: `<p>Mã xác nhận xóa tài khoản của bạn là <strong>${code}</strong>.</p><p>Mã có hiệu lực trong 10 phút. Nếu bạn không yêu cầu, hãy đổi mật khẩu ngay.</p>`,
+    });
+  } catch (error) {
+    user.accountDeletionCode = undefined;
+    user.accountDeletionExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+    const deliveryError = new Error('Không thể gửi email xác nhận xóa tài khoản.');
+    deliveryError.statusCode = 503;
+    throw deliveryError;
+  }
+  return { message: 'Mã xác nhận đã được gửi đến email của bạn.' };
+};
 
-  // Delete related data
+const requestEmailChange = async (userId, password, newEmail) => {
+  const crypto = require('crypto');
+  const emailService = require('./email.service');
+  const normalizedEmail = String(newEmail || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error('Email mới không hợp lệ');
+  if (await User.exists({ email: normalizedEmail, _id: { $ne: userId } })) throw new Error('Email này đã được sử dụng');
+  const user = await User.findById(userId).select('+password +pendingEmail +emailChangeCode +emailChangeExpires');
+  if (!user || !(await user.matchPassword(password))) throw new Error('Mật khẩu không chính xác');
+  const code = crypto.randomInt(100000, 1000000).toString();
+  user.pendingEmail = normalizedEmail;
+  user.emailChangeCode = crypto.createHash('sha256').update(code).digest('hex');
+  user.emailChangeExpires = new Date(Date.now() + 10 * 60 * 1000);
+  await user.save({ validateBeforeSave: false });
+  try {
+    await emailService.sendEmail({ to: normalizedEmail, subject: `${code} là mã xác minh email HOCA`, html: `<p>Mã xác minh email mới của bạn là <strong>${code}</strong>.</p><p>Mã có hiệu lực trong 10 phút.</p>` });
+  } catch (error) {
+    user.pendingEmail = undefined; user.emailChangeCode = undefined; user.emailChangeExpires = undefined;
+    await user.save({ validateBeforeSave: false });
+    const deliveryError = new Error('Không thể gửi mã xác minh đến email mới'); deliveryError.statusCode = 503; throw deliveryError;
+  }
+  return { message: 'Đã gửi mã xác minh đến email mới.' };
+};
+
+const confirmEmailChange = async (userId, code) => {
+  const crypto = require('crypto');
+  const user = await User.findById(userId).select('+pendingEmail +emailChangeCode +emailChangeExpires +authVersion');
+  if (!user?.pendingEmail || !user.emailChangeCode || !user.emailChangeExpires || user.emailChangeExpires < new Date()) throw new Error('Yêu cầu đổi email đã hết hạn');
+  const hash = crypto.createHash('sha256').update(String(code || '')).digest('hex');
+  if (!crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(user.emailChangeCode))) throw new Error('Mã xác minh không chính xác');
+  if (await User.exists({ email: user.pendingEmail, _id: { $ne: userId } })) throw new Error('Email này đã được sử dụng');
+  user.email = user.pendingEmail; user.pendingEmail = undefined; user.emailChangeCode = undefined; user.emailChangeExpires = undefined;
+  user.authVersion = (user.authVersion || 0) + 1;
+  await user.save({ validateBeforeSave: false });
+  const AuthSession = require('../models/AuthSession');
+  await AuthSession.updateMany({ user: userId, revokedAt: null }, { revokedAt: new Date() });
+  return { email: user.email };
+};
+
+const deleteAccount = async (userId, password, code) => {
+  const crypto = require('crypto');
+  const user = await User.findById(userId).select(
+    '+password +accountDeletionCode +accountDeletionExpires +accountDeletionAttempts +authVersion',
+  );
+  if (!user || !password || !(await user.matchPassword(password))) {
+    throw new Error('Mật khẩu không chính xác');
+  }
+  if (!/^\d{6}$/.test(String(code || '')) || !user.accountDeletionCode ||
+      !user.accountDeletionExpires || user.accountDeletionExpires < new Date()) {
+    throw new Error('Mã xác nhận không hợp lệ hoặc đã hết hạn');
+  }
+  if ((user.accountDeletionAttempts || 0) >= 5) throw new Error('Bạn đã nhập sai quá nhiều lần');
+  const suppliedHash = crypto.createHash('sha256').update(String(code)).digest('hex');
+  const validCode = crypto.timingSafeEqual(
+    Buffer.from(suppliedHash),
+    Buffer.from(user.accountDeletionCode),
+  );
+  if (!validCode) {
+    user.accountDeletionAttempts = (user.accountDeletionAttempts || 0) + 1;
+    await user.save({ validateBeforeSave: false });
+    throw new Error('Mã xác nhận không chính xác');
+  }
+
   const StudySession = require('../models/StudySession');
   const Room = require('../models/Room');
+  const Message = require('../models/Message');
+  const Notification = require('../models/Notification');
+  const Report = require('../models/Report');
+  const Feedback = require('../models/Feedback');
+  const AIUsage = require('../models/AIUsage');
+  const AIConversation = require('../models/AIConversation');
+  const StudyGoal = require('../models/StudyGoal');
+  const DiscussionSession = require('../models/DiscussionSession');
+  const Transaction = require('../models/Transaction');
+  const SupportTicket = require('../models/SupportTicket');
+  const AuthSession = require('../models/AuthSession');
+  const CommunityReaction = require('../models/CommunityReaction');
+  const ownedRooms = await Room.find({ owner: userId }).distinct('_id');
+  const emailHash = crypto.createHash('sha256').update(user.email || String(userId)).digest('hex');
 
-  // Delete user's study sessions
-  await StudySession.deleteMany({ user: userId });
-
-  // Delete user's rooms
-  await Room.deleteMany({ owner: userId });
-
-  // Delete the user
+  await Promise.all([
+    StudySession.deleteMany({ $or: [{ user: userId }, { room: { $in: ownedRooms } }] }),
+    Message.deleteMany({ $or: [{ sender: userId }, { room: { $in: ownedRooms } }] }),
+    Notification.deleteMany({ user: userId }),
+    Report.deleteMany({ $or: [{ submitter: userId }, { targetUser: userId }] }),
+    Feedback.deleteMany({ user: userId }),
+    AIUsage.deleteMany({ user: userId }),
+    AIConversation.deleteMany({ user: userId }),
+    StudyGoal.deleteMany({ user: userId }),
+    DiscussionSession.deleteMany({ room: { $in: ownedRooms } }),
+    Transaction.updateMany(
+      { user: userId },
+      { $unset: { user: 1 }, $set: { accountDeleted: true, anonymizedUserHash: emailHash } },
+    ),
+    Room.deleteMany({ owner: userId }),
+    SupportTicket.deleteMany({ user: userId }),
+    AuthSession.deleteMany({ user: userId }),
+    CommunityReaction.deleteMany({ user: userId }),
+  ]);
   await User.findByIdAndDelete(userId);
-
-  return { message: 'Tài khoản đã được xóa thành công' };
+  return { message: 'Tài khoản và dữ liệu cá nhân đã được xóa.' };
 };
 
 module.exports = {
@@ -552,5 +672,8 @@ module.exports = {
   recoverStreak,
   updateVirtualBackground,
   getWeeklyActivity,
+  requestAccountDeletion,
+  requestEmailChange,
+  confirmEmailChange,
   deleteAccount
 };

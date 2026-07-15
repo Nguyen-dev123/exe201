@@ -20,8 +20,22 @@ const transactionSchema = new mongoose.Schema({
   paymentMethod: { type: String, default: 'VNPAY' },
   txnRef: { type: String, unique: true }, // Order ID sent to VNPay
   vnpayTransactionNo: String, // Transaction No from VNPay
+  description: String,
   
-  completedAt: Date
+  completedAt: Date,
+  refundStatus: {
+    type: String,
+    enum: ['NONE', 'REQUESTED', 'APPROVED', 'REJECTED', 'REFUNDED'],
+    default: 'NONE'
+  },
+  refundReason: { type: String, maxlength: 1000 },
+  refundRequestedAt: Date,
+  accountDeleted: { type: Boolean, default: false },
+  anonymizedUserHash: { type: String, select: false }
 }, { timestamps: true });
+
+transactionSchema.index({ status: 1, createdAt: -1 });
+transactionSchema.index({ status: 1, type: 1, createdAt: -1 });
+transactionSchema.index({ user: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Transaction', transactionSchema);

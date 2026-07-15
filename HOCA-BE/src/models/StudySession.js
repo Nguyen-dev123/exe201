@@ -11,4 +11,11 @@ const studySessionSchema = new mongoose.Schema({
   isCompleted: { type: Boolean, default: false }
 }, { timestamps: true });
 
+// A user can have only one unfinished session in the same room. This also
+// protects against duplicate Socket.IO join events arriving concurrently.
+studySessionSchema.index(
+  { user: 1, room: 1 },
+  { unique: true, partialFilterExpression: { isCompleted: false } },
+);
+
 module.exports = mongoose.model('StudySession', studySessionSchema);

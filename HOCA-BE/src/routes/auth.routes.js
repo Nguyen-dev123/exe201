@@ -17,6 +17,7 @@ const authRoutes = async (fastify, options) => {
     authRoutes.post("/forgot-password", authController.forgotPassword);
     authRoutes.post("/reset-password/:token", authController.resetPassword);
     authRoutes.post("/google", authController.googleLogin);
+    authRoutes.post("/2fa/login", authController.verifyTwoFactorLogin);
   });
 
   // Normal rate limit for token refresh
@@ -28,6 +29,13 @@ const authRoutes = async (fastify, options) => {
     { preHandler: protect },
     authController.changePassword,
   );
+  fastify.get('/sessions', { preHandler: protect }, authController.getSessions);
+  fastify.delete('/sessions/:sessionId', { preHandler: protect }, authController.revokeSession);
+  fastify.post('/logout', { preHandler: protect }, authController.logoutCurrent);
+  fastify.post('/logout-all', { preHandler: protect }, authController.logoutAll);
+  fastify.post('/2fa/setup', { preHandler: protect }, authController.beginTwoFactorSetup);
+  fastify.post('/2fa/confirm', { preHandler: protect }, authController.confirmTwoFactorSetup);
+  fastify.post('/2fa/disable', { preHandler: protect }, authController.disableTwoFactor);
 };
 
 module.exports = authRoutes;

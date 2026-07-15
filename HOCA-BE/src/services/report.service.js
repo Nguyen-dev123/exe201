@@ -10,11 +10,31 @@ const createReport = async (submitterId, data) => {
 };
 
 const getReports = async (query = {}) => {
-  return await Report.find(query)
-    .populate("submitter", "displayName email")
-    .populate("targetUser", "displayName email avatar")
-    .populate("room", "name")
-    .sort("-createdAt");
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 30));
+  const filter = {};
+  if (query.status) filter.status = query.status;
+  if (query.reason) filter.reason = query.reason;
+  if (query.room) filter.room = query.room;
+  if (query.targetUser) filter.targetUser = query.targetUser;
+
+  const [reports, total] = await Promise.all([
+    Report.find(filter)
+      .populate("submitter", "displayName email")
+      .populate("targetUser", "displayName email avatar")
+      .populate("room", "name")
+      .sort("-createdAt")
+      .skip((page - 1) * limit)
+      .limit(limit),
+    Report.countDocuments(filter),
+  ]);
+
+  return {
+    reports,
+    total,
+    page,
+    pages: Math.ceil(total / limit),
+  };
 };
 
 const resolveReport = async (

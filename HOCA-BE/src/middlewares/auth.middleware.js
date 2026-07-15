@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const AuthSession = require('../models/AuthSession');
 
 const protect = async (req, reply) => {
   try {
@@ -6,9 +7,23 @@ const protect = async (req, reply) => {
 
     // Fetch full user object after JWT is verified
     // This ensures req.user has both .id and ._id for compatibility
-    const user = await User.findById(req.user.id);
+    const tokenPayload = req.user;
+    const user = await User.findById(tokenPayload.id).select('+authVersion');
     if (!user) {
       return reply.code(401).send({ message: 'User not found' });
+    }
+    if (Number(tokenPayload.authVersion || 0) !== Number(user.authVersion || 0)) {
+      return reply.code(401).send({ message: 'Phiên đăng nhập đã bị thu hồi' });
+    }
+    if (tokenPayload.sessionId) {
+      const session = await AuthSession.findOne({
+        user: user._id,
+        sessionId: tokenPayload.sessionId,
+        revokedAt: null,
+        expiresAt: { $gt: new Date() },
+      });
+      if (!session) return reply.code(401).send({ message: 'Phiên đăng nhập đã bị thu hồi' });
+      req.userSessionId = tokenPayload.sessionId;
     }
 
     // Check if user is locked/blocked

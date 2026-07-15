@@ -17,14 +17,14 @@ const TIER_LEVELS = {
 const TIER_LIMITS = {
   FREE: {
     dailyStudyMinutes: 180, // 3 hours/day total
-    roomsPerDay: 999, // Unlimited rooms per day
+    roomsPerDay: Infinity,
     roomDurationMinutes: 60, // Auto-close after 60 min
-    requireSequentialRooms: false, // Can create multiple rooms at once
+    requireSequentialRooms: true,
     warningBeforeKickMinutes: 5, // Warn 5 min before kick
   },
   MONTHLY: {
     dailyStudyMinutes: Infinity,
-    roomsPerDay: 10, // Max 10 rooms per day
+    roomsPerDay: Infinity,
     roomDurationMinutes: Infinity, // No auto-close
     requireSequentialRooms: false,
     warningBeforeKickMinutes: 0,
@@ -48,18 +48,18 @@ const TIER_LIMITS = {
 // Feature access matrix
 const FEATURE_ACCESS = {
   // Chat in rooms
-  chat: ["MONTHLY", "YEARLY", "LIFETIME"],
+  chat: ["FREE", "MONTHLY", "YEARLY", "LIFETIME"],
 
   // Background features
   background_preset: ["MONTHLY", "YEARLY", "LIFETIME"],
-  background_upload: ["YEARLY", "LIFETIME"],
+  background_upload: ["MONTHLY", "YEARLY", "LIFETIME"],
 
   // Time limits
   unlimited_study_time: ["MONTHLY", "YEARLY", "LIFETIME"],
   unlimited_sessions: ["MONTHLY", "YEARLY", "LIFETIME"],
 
   // Room limits
-  unlimited_rooms: ["YEARLY", "LIFETIME"],
+  unlimited_rooms: ["FREE", "MONTHLY", "YEARLY", "LIFETIME"],
 
   // Mic & Discussion Room features (HOCA+)
   use_mic: ["MONTHLY", "YEARLY", "LIFETIME"],
@@ -81,19 +81,19 @@ const PRICING = {
   MONTHLY: {
     price: 79000,
     durationDays: 30,
-    name: "HOCA+ 1 Tháng",
-    description: "Không quảng cáo, học không giới hạn",
+    name: "HOCA+ Tháng",
+    description: "Trọn bộ công cụ học nhóm trong 30 ngày",
   },
   YEARLY: {
     price: 599000,
     durationDays: 365,
-    name: "HOCA+ 1 Năm",
+    name: "HOCA+ Năm",
     description: "Tiết kiệm 37%, mở khóa tất cả tính năng",
   },
   LIFETIME: {
     price: 1499000,
     durationDays: -1, // Never expires
-    name: "HOCA+ Vĩnh Viễn",
+    name: "HOCA+ Vĩnh viễn",
     description: "Một lần mua, dùng trọn đời",
   },
 };
@@ -251,25 +251,6 @@ const checkRoomCreationEligibility = (user, roomType = "SILENT") => {
     };
   }
 
-  const now = new Date();
-  const isNewDay = !isSameDay(user.lastRoomCreatedDate, now);
-  const todayCount = isNewDay ? 0 : user.todayRoomCreatedCount || 0;
-
-  // Check daily limit
-  if (todayCount >= limits.roomsPerDay) {
-    if (tier === "FREE") {
-      return {
-        canCreate: false,
-        reason: `Bạn đã tạo đủ ${limits.roomsPerDay} phòng miễn phí hôm nay. Nâng cấp HOCA+ để tạo thêm phòng!`,
-      };
-    } else if (tier === "MONTHLY") {
-      return {
-        canCreate: false,
-        reason: `Bạn đã tạo đủ ${limits.roomsPerDay} phòng hôm nay. Nâng cấp HOCA+ Năm để tạo không giới hạn!`,
-      };
-    }
-  }
-
   // Check sequential requirement (FREE tier)
   if (limits.requireSequentialRooms && user.activePersonalRoomId) {
     return {
@@ -414,48 +395,62 @@ const getTierInfo = (tier) => {
 
   const info = {
     FREE: {
-      name: "Free",
+      name: "HOCA Free",
       color: "gray",
       icon: "person",
+      description: "Đủ công cụ để bắt đầu học mỗi ngày",
       features: [
-        `Học tối đa ${limits.dailyStudyMinutes / 60} giờ/ngày`,
-        `Tối đa ${limits.roomsPerDay} phòng/ngày (${limits.roomDurationMinutes} phút/phòng)`,
-        "Pomodoro cơ bản",
-        "Chuỗi học tập cơ bản",
+        `Học tối đa ${limits.dailyStudyMinutes / 60} giờ mỗi ngày`,
+        `Tạo không giới hạn phòng Im lặng & Camera`,
+        `Phòng tự động đóng sau ${limits.roomDurationMinutes} phút`,
+        "Camera, mic & chat trong Phòng Camera",
+        "Pomodoro, Streak, XP & Huy hiệu cơ bản",
+        "Bảng xếp hạng & dùng thử HOCA AI 15 lượt/ngày",
       ],
     },
     MONTHLY: {
       name: "HOCA+ Tháng",
       color: "blue",
       icon: "workspace_premium",
+      description: "Trọn bộ công cụ học nhóm trong 30 ngày",
       features: [
-        "Học không giới hạn thời gian",
-        "Không quảng cáo",
-        `Tối đa ${TIER_LIMITS.MONTHLY.roomsPerDay} phòng/ngày`,
-        "Background học tập có sẵn",
-        "Chat trong phòng",
+        "Toàn bộ quyền lợi gói Free",
+        "Học không giới hạn thời gian, không quảng cáo",
+        "Tạo phòng không giới hạn mỗi ngày, không giới hạn thời lượng",
+        "Tạo HOCA Smart Discussion & dùng mic thảo luận",
+        "Giơ tay, điều phối phát biểu & đồng chủ phòng",
+        "Bảng cộng tác, tài liệu, nhiệm vụ & quiz",
+        "AI Thư ký, tổng kết & flashcard",
+        "Nền ảo có sẵn, tải nền riêng & mật khẩu bảo vệ phòng",
       ],
     },
     YEARLY: {
       name: "HOCA+ Năm",
       color: "purple",
       icon: "diamond",
+      description: "Tiết kiệm 37%, không giới hạn phòng",
       features: [
-        "Tất cả tính năng gói Tháng",
-        "Phòng không giới hạn",
-        "Upload background riêng",
-        "Ưu tiên hỗ trợ",
+        "Toàn bộ quyền lợi của HOCA+ Tháng",
+        "Tạo phòng không giới hạn mỗi ngày",
+        "Phòng học & Smart Discussion không giới hạn thời lượng",
+        "Lưu bảng chung, quiz, tài liệu & nhiệm vụ",
+        "AI tổng kết & flashcard cho mọi buổi thảo luận",
+        "Hiệu lực liên tục trong 365 ngày",
       ],
     },
     LIFETIME: {
-      name: "HOCA+ Vĩnh Viễn",
+      name: "HOCA+ Vĩnh viễn",
       color: "amber",
       icon: "stars",
+      description: "Thanh toán một lần, dùng trọn đời",
       features: [
-        "Tất cả tính năng mãi mãi",
-        "Cập nhật sớm nhất (Early Access)",
-        "Badge độc quyền",
-        "Hỗ trợ VIP",
+        "Toàn bộ quyền lợi của HOCA+ Năm",
+        "Học & tạo phòng không giới hạn trọn đời",
+        "Smart Discussion & AI Thư ký trọn đời",
+        "Tải tài liệu & nền ảo cá nhân",
+        "Không gia hạn, không phát sinh phí hằng năm",
+        "Nhận nâng cấp HOCA+ trong tương lai",
+        "Gói không bao giờ hết hạn",
       ],
     },
   };

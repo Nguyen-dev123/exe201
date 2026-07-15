@@ -2,8 +2,8 @@ const mongoose = require('mongoose');
 
 /**
  * AI Usage Schema - Tracks daily AI question usage per user
- * FREE users: 5 questions/day
- * HOCA+ users: Unlimited
+ * FREE users: 15 questions/day on the personal AI page
+ * Paid users: Unlimited only when AI is used inside a room
  */
 const aiUsageSchema = new mongoose.Schema({
     user: {
@@ -16,6 +16,10 @@ const aiUsageSchema = new mongoose.Schema({
         required: true
     },
     questionCount: {
+        type: Number,
+        default: 0
+    },
+    freeMainQuestionCount: {
         type: Number,
         default: 0
     },
@@ -33,35 +37,44 @@ const aiUsageSchema = new mongoose.Schema({
     timestamps: true
 });
 
+const getVietnamDateKey = (date = new Date()) =>
+    new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).format(date);
+
 // Compound index for efficient daily lookup
 aiUsageSchema.index({ user: 1, date: 1 }, { unique: true });
 
 // Static method to get or create today's usage record
 aiUsageSchema.statics.getTodayUsage = async function (userId) {
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = getVietnamDateKey();
 
-    let usage = await this.findOne({ user: userId, date: today });
-
-    if (!usage) {
-        usage = await this.create({
-            user: userId,
-            date: today,
-            questionCount: 0,
-            questions: []
-        });
-    }
-
-    return usage;
+    return this.findOneAndUpdate(
+        { user: userId, date: today },
+        {
+            $setOnInsert: {
+                questionCount: 0,
+                freeMainQuestionCount: 0,
+                questions: []
+            }
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 };
 
 // Static method to increment usage
-aiUsageSchema.statics.incrementUsage = async function (userId, questionData) {
-    const today = new Date().toISOString().split('T')[0];
+aiUsageSchema.statics.incrementUsage = async function (userId, questionData, options = {}) {
+    const today = getVietnamDateKey();
+    const increments = { questionCount: 1 };
+    if (options.countTowardsDailyLimit) increments.freeMainQuestionCount = 1;
 
     return await this.findOneAndUpdate(
         { user: userId, date: today },
         {
-            $inc: { questionCount: 1 },
+            $inc: increments,
             $push: {
                 questions: {
                     question: questionData.question?.substring(0, 500), // Limit stored question length
@@ -78,7 +91,26 @@ aiUsageSchema.statics.incrementUsage = async function (userId, questionData) {
 // Static method to check if user can ask (for FREE users)
 aiUsageSchema.statics.canAsk = async function (userId, dailyLimit) {
     const usage = await this.getTodayUsage(userId);
-    return usage.questionCount < dailyLimit;
+    return usage.freeMainQuestionCount < dailyLimit;
+};
+
+// Atomically reserve one free personal-AI question so parallel requests
+// cannot exceed the daily allowance.
+aiUsageSchema.statics.reserveFreeMainQuestion = async function (userId, dailyLimit) {
+    const today = getVietnamDateKey();
+    await this.getTodayUsage(userId);
+
+    return this.findOneAndUpdate(
+        {
+            user: userId,
+            date: today,
+            $expr: {
+                $lt: [{ $ifNull: ['$freeMainQuestionCount', 0] }, dailyLimit]
+            }
+        },
+        { $inc: { freeMainQuestionCount: 1 } },
+        { new: true }
+    );
 };
 
 const AIUsage = mongoose.model('AIUsage', aiUsageSchema);

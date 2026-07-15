@@ -92,9 +92,55 @@ const getWeeklyActivity = async (req, reply) => {
   }
 };
 
+const requestAccountDeletion = async (req, reply) => {
+  try {
+    const result = await userService.requestAccountDeletion(req.user.id, req.body?.password);
+    reply.send(result);
+  } catch (error) {
+    reply.code(error.statusCode || 400).send({ message: error.message });
+  }
+};
+
+const exportAccountData = async (req, reply) => {
+  const mongoose = require('mongoose');
+  const output = { exportedAt: new Date().toISOString(), profile: req.user.toObject() };
+  for (const key of ['password','verificationCode','verificationCodeExpires','verificationCodeSentAt','twoFactorSecret','twoFactorPendingSecret','authVersion','resetPasswordToken','resetPasswordExpire','emailChangeCode','emailChangeExpires']) delete output.profile[key];
+  const collections = {
+    StudySession: { user: req.user._id }, StudyGoal: { user: req.user._id },
+    Notification: { user: req.user._id }, AIUsage: { user: req.user._id },
+    AIConversation: { user: req.user._id }, Transaction: { user: req.user._id },
+    Feedback: { user: req.user._id }, SupportTicket: { user: req.user._id },
+    AuthSession: { user: req.user._id }, CommunityReaction: { user: req.user._id },
+    RoomRating: { user: req.user._id }, Message: { sender: req.user._id },
+    Room: { $or: [{ owner: req.user._id }, { activeParticipants: req.user._id }] },
+    RoomInvite: { $or: [{ inviter: req.user._id }, { invitee: req.user._id }] },
+    Report: { $or: [{ submitter: req.user._id }, { targetUser: req.user._id }] },
+  };
+  for (const [name, query] of Object.entries(collections)) {
+    try {
+      const Model = mongoose.model(name);
+      output[name] = await Model.find(query).lean();
+    } catch { output[name] = []; }
+  }
+  reply.header('Content-Disposition', `attachment; filename="hoca-data-${req.user._id}.json"`);
+  reply.type('application/json').send(output);
+};
+const requestEmailChange = async (req, reply) => {
+  try { reply.send(await userService.requestEmailChange(req.user.id, req.body?.password, req.body?.newEmail)); }
+  catch (error) { reply.code(error.statusCode || 400).send({ message: error.message }); }
+};
+const confirmEmailChange = async (req, reply) => {
+  try { reply.send(await userService.confirmEmailChange(req.user.id, req.body?.code)); }
+  catch (error) { reply.code(400).send({ message: error.message }); }
+};
+
 const deleteAccount = async (req, reply) => {
   try {
-    const result = await userService.deleteAccount(req.user.id);
+    const result = await userService.deleteAccount(
+      req.user.id,
+      req.body?.password,
+      req.body?.code,
+    );
     reply.send(result);
   } catch (error) {
     reply.code(400).send({ message: error.message });
@@ -111,5 +157,9 @@ module.exports = {
   recoverStreak,
   updateVirtualBackground,
   getWeeklyActivity,
+  exportAccountData,
+  requestAccountDeletion,
+  requestEmailChange,
+  confirmEmailChange,
   deleteAccount
 };

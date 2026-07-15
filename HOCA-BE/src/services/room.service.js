@@ -2,7 +2,9 @@ const Room = require("../models/Room");
 const StudySession = require("../models/StudySession");
 const User = require("../models/User");
 const SystemConfig = require("../models/SystemConfig");
+const StudyGoal = require("../models/StudyGoal");
 const subscriptionService = require("./subscription.service");
+const bcrypt = require("bcrypt");
 
 // Helper: Get config with default
 const getConfig = async (key, defaultVal) => {
@@ -77,8 +79,14 @@ const createRoom = async (userId, roomData) => {
   // Calculate autoCloseAt for FREE tier rooms
   let autoCloseAt = null;
   if (tierLimits.roomDurationMinutes !== Infinity) {
+    const scheduledStart = roomData.scheduledFor
+      ? new Date(roomData.scheduledFor)
+      : null;
+    const durationStartsAt = scheduledStart && scheduledStart.getTime() > Date.now()
+      ? scheduledStart.getTime()
+      : Date.now();
     autoCloseAt = new Date(
-      Date.now() + tierLimits.roomDurationMinutes * 60 * 1000,
+      durationStartsAt + tierLimits.roomDurationMinutes * 60 * 1000,
     );
   }
 
@@ -86,16 +94,47 @@ const createRoom = async (userId, roomData) => {
   // Default: all rooms are public (searchable) unless user explicitly sets isPublic: false
   const isPublic = roomData.isPublic !== undefined ? roomData.isPublic : true;
 
+  // Hash password if provided (only for premium users creating private discussion rooms)
+  let hashedPassword = null;
+  if (roomData.password && roomData.password.trim()) {
+    // Only HOCA+ can set password
+    if (tier === "FREE") {
+      throw new Error("Nâng cấp HOCA+ để tạo phòng có mật khẩu riêng tư!");
+    }
+    // Only DISCUSSION room can have password
+    if (roomType !== "DISCUSSION") {
+      throw new Error("Chỉ phòng Thảo luận mới có thể đặt mật khẩu!");
+    }
+    hashedPassword = await bcrypt.hash(roomData.password, 10);
+  }
+
+  let studyGoal = null;
+  if (roomData.studyGoalId) {
+    studyGoal = await StudyGoal.findOne({
+      _id: roomData.studyGoalId,
+      user: userId,
+      status: "ACTIVE",
+    });
+  }
+
+  const { studyGoalId, ...safeRoomData } = roomData;
   const room = await Room.create({
-    ...roomData,
+    ...safeRoomData,
     roomType,
     maxParticipants,
     owner: userId,
     isActive: true,
     isPublic,
+    password: hashedPassword, // Store hashed password
     autoCloseAt,
     ownerTierAtCreation: tier,
+    studyGoal: studyGoal?._id || null,
   });
+
+  if (studyGoal) {
+    studyGoal.room = room._id;
+    await studyGoal.save();
+  }
 
   // Update user's room creation tracking
   user.todayRoomCreatedCount = (user.todayRoomCreatedCount || 0) + 1;
@@ -138,17 +177,33 @@ const closeRoom = async (roomId, reason = "manual") => {
     }
   }
 
-  // End all active sessions in this room
-  await StudySession.updateMany(
-    { room: roomId, endTime: null },
-    { $set: { endTime: new Date(), isCompleted: true } },
-  );
+  // End active sessions with their real duration so Admin/automatic room
+  // closures do not lose study-time data.
+  const endedAt = new Date();
+  const openSessions = await StudySession.find({ room: roomId, endTime: null });
+  for (const session of openSessions) {
+    session.endTime = endedAt;
+    session.duration = Math.max(
+      0,
+      Math.floor((endedAt.getTime() - session.startTime.getTime()) / 60000),
+    );
+    session.isCompleted = true;
+    await session.save();
+    await updateUserStats(session.user, session.duration);
+    await User.findByIdAndUpdate(session.user, {
+      $inc: { todayRoomMinutes: session.duration },
+      $set: { currentRoomId: null, currentSessionStartTime: null },
+    });
+  }
 
   // Clear currentRoomId for all participants
   await User.updateMany(
     { currentRoomId: roomId },
-    { $set: { currentRoomId: null } },
+    { $set: { currentRoomId: null, currentSessionStartTime: null } },
   );
+
+  room.activeParticipants = [];
+  await room.save();
 
   console.log(`Room ${roomId} closed. Reason: ${reason}`);
 
@@ -172,7 +227,9 @@ const getPublicRooms = async (query = {}) => {
 const getRoomById = async (roomId) => {
   const room = await Room.findById(roomId)
     .populate("owner", "displayName avatar")
-    .populate("activeParticipants", "displayName avatar");
+    .populate("activeParticipants", "displayName avatar")
+    .populate("studyGoal", "text status user completedAt")
+    .select("+password");
   if (!room) throw new Error("Room not found");
   return room;
 };
@@ -182,7 +239,7 @@ const joinRoom = async (roomId, userId, password) => {
   console.log("Service joinRoom called:", { roomId: cleanId, userId });
 
   // Get user first for all checks
-  const user = await User.findById(userId);
+  let user = await User.findById(userId);
   if (!user) throw new Error("User not found");
 
   if (user.isLocked || user.isBlocked) {
@@ -194,14 +251,7 @@ const joinRoom = async (roomId, userId, password) => {
   // Reset daily stats if new day
   await resetDailyStatsIfNeeded(user);
 
-  // === RESTRICTION 1: Single Room Participation (System-wide) ===
-  if (user.currentRoomId && user.currentRoomId.toString() !== cleanId) {
-    throw new Error(
-      "Bạn đang ở trong một phòng khác. Vui lòng rời phòng trước khi tham gia phòng mới.",
-    );
-  }
-
-  // === RESTRICTION 2: Check join eligibility based on daily study time ===
+  // Check join eligibility based on daily study time.
   const joinEligibility = subscriptionService.checkJoinRoomEligibility(user);
   if (!joinEligibility.canJoin) {
     throw new Error(joinEligibility.reason);
@@ -222,12 +272,23 @@ const joinRoom = async (roomId, userId, password) => {
     throw new Error("Phòng này đã đóng hoặc không còn hoạt động.");
   }
 
+  const isOwner = room.owner?.toString() === userId.toString();
+  const canEnterBeforeSchedule = isOwner || user.role === "ADMIN";
+
   // Check Password - for both public and private rooms
   if (room.password) {
     // Room has password - need to verify
-    const isOwner = room.owner?.toString() === userId;
-    if (!isOwner && room.password !== password) {
-      throw new Error("Sai mật khẩu phòng. Vui lòng thử lại.");
+    if (!isOwner) {
+      // Non-owner must provide correct password
+      if (!password) {
+        throw new Error(
+          "Phòng này yêu cầu mật khẩu. Vui lòng nhập mật khẩu để vào.",
+        );
+      }
+      const isPasswordValid = await bcrypt.compare(password, room.password);
+      if (!isPasswordValid) {
+        throw new Error("Sai mật khẩu phòng. Vui lòng thử lại.");
+      }
     }
   }
 
@@ -248,6 +309,24 @@ const joinRoom = async (roomId, userId, password) => {
       );
     }
   }
+  if (
+    room.scheduledFor &&
+    new Date(room.scheduledFor).getTime() > Date.now() &&
+    !canEnterBeforeSchedule
+  ) {
+    throw new Error(`Phòng được lên lịch vào ${new Date(room.scheduledFor).toLocaleString('vi-VN')}.`);
+  }
+
+  // A successful join automatically switches the user out of their previous
+  // room. This also repairs stale currentRoomId values left by a closed tab or
+  // interrupted connection, while preserving the one-room-at-a-time rule.
+  let previousRoomId = null;
+  if (user.currentRoomId && user.currentRoomId.toString() !== cleanId) {
+    previousRoomId = user.currentRoomId.toString();
+    await leaveRoom(previousRoomId, userId);
+    user = await User.findById(userId);
+    if (!user) throw new Error("User not found");
+  }
 
   // Add to active participants
   await Room.findByIdAndUpdate(cleanId, {
@@ -264,16 +343,19 @@ const joinRoom = async (roomId, userId, password) => {
   await user.save();
 
   // Start Study Session
-  let session = await StudySession.findOne({
-    user: userId,
-    room: roomId,
-    endTime: null,
-  });
-  if (!session) {
-    session = await StudySession.create({
+  let session;
+  try {
+    session = await StudySession.findOneAndUpdate(
+      { user: userId, room: roomId, isCompleted: false },
+      { $setOnInsert: { startTime: new Date() } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+    session = await StudySession.findOne({
       user: userId,
       room: roomId,
-      startTime: new Date(),
+      isCompleted: false,
     });
   }
 
@@ -284,6 +366,7 @@ const joinRoom = async (roomId, userId, password) => {
     room,
     session,
     remainingMinutes: timeStatus.remainingMinutes,
+    previousRoomId,
   };
 };
 

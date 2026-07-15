@@ -23,4 +23,7 @@ const reportSchema = new mongoose.Schema({
   resolvedAt: Date
 }, { timestamps: true });
 
+reportSchema.index({ status: 1, createdAt: -1 });
+reportSchema.index({ room: 1, status: 1 });
+
 module.exports = mongoose.model('Report', reportSchema);

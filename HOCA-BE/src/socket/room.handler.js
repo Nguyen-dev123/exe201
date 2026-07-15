@@ -1,6 +1,7 @@
 const Room = require("../models/Room");
 const User = require("../models/User");
 const Message = require("../models/Message");
+const DiscussionSession = require("../models/DiscussionSession");
 const { joinRoom, leaveRoom } = require("../services/room.service");
 const subscriptionService = require("../services/subscription.service");
 const { checkAndUnlockBadges } = require("../services/badge.service");
@@ -22,6 +23,19 @@ const TIMER_MODES = {
 
 const registerRoomHandlers = (io, socket) => {
   const userId = socket.user.id;
+
+  const isJoined = (roomId) => Boolean(roomId && socket.rooms.has(String(roomId)));
+  const canManageRoom = async (roomId) => {
+    if (!isJoined(roomId)) return false;
+    if (socket.user.role === "ADMIN") return true;
+    const [room, session] = await Promise.all([
+      Room.findById(roomId).select("owner"),
+      DiscussionSession.findOne({ room: roomId }).select("coHosts"),
+    ]);
+    if (!room) return false;
+    return String(room.owner || "") === String(userId) ||
+      Boolean(session?.coHosts?.some((id) => String(id) === String(userId)));
+  };
 
   // Helper: Clear FREE user time tracker
   const clearFreeUserTracker = (uid) => {
@@ -193,6 +207,27 @@ const registerRoomHandlers = (io, socket) => {
 
       const result = await joinRoom(roomId, userId, password);
 
+      if (result.previousRoomId) {
+        const previousRoomId = result.previousRoomId;
+        const previousRoomSockets = await io.in(previousRoomId).fetchSockets();
+
+        for (const participantSocket of previousRoomSockets) {
+          if (participantSocket.user?.id?.toString() !== userId.toString()) continue;
+          participantSocket.leave(previousRoomId);
+          if (participantSocket.id !== socket.id) {
+            participantSocket.emit("room-switched", {
+              roomId: previousRoomId,
+              message: "Tài khoản của bạn đã chuyển sang một phòng học khác.",
+            });
+          }
+        }
+
+        io.to(previousRoomId).emit("user-left", {
+          userId,
+          userName: socket.user.displayName,
+        });
+      }
+
       socket.join(roomId);
 
       console.log(`[JOIN] User ${userId} successfully joined room ${roomId}`);
@@ -206,6 +241,7 @@ const registerRoomHandlers = (io, socket) => {
       const onlineUsers = socketsInRoom.map((s) => ({
         userId: s.user?.id,
         userName: s.user?.displayName || "User",
+        avatar: s.user?.avatar,
         socketId: s.id,
       }));
 
@@ -342,7 +378,23 @@ const registerRoomHandlers = (io, socket) => {
 
     const rooms = [...socket.rooms];
     rooms.forEach((roomId) => {
-      if (roomId !== socket.id) handleLeave(roomId);
+      if (roomId === socket.id) return;
+
+      // Give the client a short reconnect window. Without this check, a slow
+      // cleanup from the old socket can remove the participant after the new
+      // socket has already rejoined the room.
+      const reconnectGraceTimer = setTimeout(async () => {
+        try {
+          const currentSockets = await io.in(roomId).fetchSockets();
+          const hasReconnected = currentSockets.some(
+            (candidate) => String(candidate.user?.id) === String(userId),
+          );
+          if (!hasReconnected) await handleLeave(roomId);
+        } catch (error) {
+          console.error("Reconnect cleanup error:", error.message);
+        }
+      }, 3000);
+      reconnectGraceTimer.unref?.();
     });
   });
 
@@ -403,6 +455,9 @@ const registerRoomHandlers = (io, socket) => {
   socket.on("timer-start", async ({ roomId }) => {
     // Determine mode from DB
     try {
+      if (!(await canManageRoom(roomId))) {
+        return socket.emit("error", { message: "Bạn không có quyền điều khiển bộ đếm của phòng." });
+      }
       const room = await Room.findById(roomId);
       if (!room) return;
 
@@ -417,7 +472,10 @@ const registerRoomHandlers = (io, socket) => {
   });
 
   // Explicit Stop (Optional, maybe for closing room)
-  socket.on("timer-stop", ({ roomId }) => {
+  socket.on("timer-stop", async ({ roomId }) => {
+    if (!(await canManageRoom(roomId))) {
+      return socket.emit("error", { message: "Bạn không có quyền điều khiển bộ đếm của phòng." });
+    }
     if (roomTimers[roomId]) {
       clearTimeout(roomTimers[roomId].timeout);
       delete roomTimers[roomId];
@@ -426,7 +484,10 @@ const registerRoomHandlers = (io, socket) => {
   });
 
   // Change timer mode - syncs to all users in room
-  socket.on("timer-mode-change", ({ roomId, mode }) => {
+  socket.on("timer-mode-change", async ({ roomId, mode }) => {
+    if (!(await canManageRoom(roomId))) {
+      return socket.emit("error", { message: "Bạn không có quyền đổi chế độ của phòng." });
+    }
     // Validate mode
     const validModes = ["POMODORO_25_5", "POMODORO_50_10", "POMODORO_90_15"];
     if (!validModes.includes(mode)) {
@@ -450,6 +511,9 @@ const registerRoomHandlers = (io, socket) => {
   });
 
   socket.on("signal", ({ roomId, signal, to }) => {
+    if (!isJoined(roomId) || !to) return;
+    const target = io.sockets.sockets.get(to);
+    if (!target?.rooms?.has(String(roomId))) return;
     io.to(to).emit("signal", {
       signal,
       from: socket.id,
@@ -472,6 +536,13 @@ const registerRoomHandlers = (io, socket) => {
       stickerId,
       mentions = [],
     }) => {
+      if (!roomId || !socket.rooms.has(String(roomId))) {
+        socket.emit("chat-error", {
+          message: "Bạn phải tham gia phòng trước khi gửi tin nhắn.",
+        });
+        return;
+      }
+
       // ✅ DEBUG: Log incoming message
       console.log(
         `[CHAT] User ${socket.user.displayName} (${userId}) sent message in room ${roomId}: "${message || content}"`,
@@ -508,7 +579,22 @@ const registerRoomHandlers = (io, socket) => {
       }
 
       const displayName = socket.user.displayName || "User";
-      const msgContent = content || message; // Fallback
+      let msgContent = content || message; // Fallback
+
+      // Lọc từ ngữ thô tục: che bằng dấu * và cảnh báo người gửi (chỉ với tin nhắn text)
+      if (type === "TEXT" && msgContent) {
+        const {
+          containsProfanity,
+          cleanText,
+        } = require("../services/profanity.service");
+        if (containsProfanity(msgContent)) {
+          msgContent = cleanText(msgContent);
+          socket.emit("chat-warning", {
+            message:
+              "⚠️ Tin nhắn của bạn chứa từ ngữ không phù hợp và đã được che. Vui lòng giữ văn minh theo quy tắc cộng đồng.",
+          });
+        }
+      }
 
       try {
         // Save to DB for history
@@ -558,7 +644,12 @@ const registerRoomHandlers = (io, socket) => {
               const question = msgContent.replace(/@HOCA AI/gi, "").trim();
               if (!question) return;
 
-              const aiResult = await aiService.askAI(question, socket.user, []);
+              const aiResult = await aiService.askAI(
+                question,
+                socket.user,
+                [],
+                "ROOM",
+              );
 
               io.to(roomId).emit("chat-message", {
                 _id: "ai_" + Date.now(),
@@ -572,6 +663,8 @@ const registerRoomHandlers = (io, socket) => {
               });
             } catch (aiErr) {
               const isLimitError =
+                aiErr.code === "ROOM_AI_PREMIUM_REQUIRED" ||
+                aiErr.code === "AI_DAILY_LIMIT_REACHED" ||
                 aiErr.message.includes("hết lượt") ||
                 aiErr.message.includes("Nâng cấp");
               if (isLimitError) {
@@ -602,13 +695,34 @@ const registerRoomHandlers = (io, socket) => {
   // Includes mic permission check for HOCA+ feature
   socket.on("media-state-update", async ({ roomId, isCameraOn, isMicOn }) => {
     try {
+      if (!isJoined(roomId)) {
+        return socket.emit("error", { message: "Bạn chưa tham gia phòng này." });
+      }
+      const room = await Room.findById(roomId);
+      const user = await User.findById(userId);
+      if (!room || !user) throw new Error("Room or user not found");
+      if (isCameraOn && room.roomType !== "VIDEO") {
+        return socket.emit("media-blocked", { message: "Camera chỉ khả dụng trong Phòng Camera." });
+      }
       // If user is trying to turn on mic, check permission
       if (isMicOn) {
-        const room = await Room.findById(roomId);
-        const user = await User.findById(userId);
-
-        if (room && user) {
+        {
           const permission = subscriptionService.checkMicPermission(user, room);
+
+          if (permission.canUseMic && room.roomType === "DISCUSSION") {
+            const session = await DiscussionSession.findOne({ room: roomId });
+            const uid = String(user._id);
+            const canManage =
+              String(room.owner || "") === uid ||
+              user.role === "ADMIN" ||
+              session?.coHosts?.some((id) => String(id) === uid);
+            const isSpeaker = String(session?.activeSpeaker?.user || "") === uid;
+            if (!canManage && !isSpeaker) {
+              permission.canUseMic = false;
+              permission.reason =
+                "Hãy giơ tay và chờ chủ phòng mời bạn phát biểu.";
+            }
+          }
 
           if (!permission.canUseMic) {
             // Block mic activation and notify user
@@ -639,19 +753,19 @@ const registerRoomHandlers = (io, socket) => {
       });
     } catch (error) {
       console.error("Error in media-state-update:", error);
-      // Fallback: allow broadcast but log error
-      socket.to(roomId).emit("media-state-update", {
-        socketId: socket.id,
-        userId: socket.user.id,
-        isCameraOn,
-        isMicOn,
-      });
+      socket.emit("media-blocked", { message: "Không thể xác minh quyền camera/micro." });
     }
   });
 
   // Request mic permission - client can call this to check before enabling mic
   socket.on("request-mic-permission", async ({ roomId }) => {
     try {
+      if (!isJoined(roomId)) {
+        return socket.emit("mic-permission-result", {
+          canUseMic: false,
+          reason: "Bạn chưa tham gia phòng này.",
+        });
+      }
       const room = await Room.findById(roomId);
       const user = await User.findById(userId);
 
@@ -664,6 +778,20 @@ const registerRoomHandlers = (io, socket) => {
       }
 
       const permission = subscriptionService.checkMicPermission(user, room);
+      if (permission.canUseMic && room.roomType === "DISCUSSION") {
+        const session = await DiscussionSession.findOne({ room: roomId });
+        const uid = String(user._id);
+        const canManage =
+          String(room.owner || "") === uid ||
+          user.role === "ADMIN" ||
+          session?.coHosts?.some((id) => String(id) === uid);
+        const isSpeaker = String(session?.activeSpeaker?.user || "") === uid;
+        if (!canManage && !isSpeaker) {
+          permission.canUseMic = false;
+          permission.reason =
+            "Hãy giơ tay và chờ chủ phòng mời bạn phát biểu.";
+        }
+      }
       const tier = subscriptionService.getEffectiveTier(user);
 
       socket.emit("mic-permission-result", {
@@ -679,6 +807,92 @@ const registerRoomHandlers = (io, socket) => {
         canUseMic: false,
         reason: "Error checking permission",
       });
+    }
+  });
+
+  // Discussion workspace data is persisted through the REST API. This event
+  // only tells other connected members to fetch the latest saved session.
+  socket.on("discussion-session-updated", ({ roomId }) => {
+    if (!roomId || !socket.rooms.has(String(roomId))) return;
+    socket.to(String(roomId)).emit("discussion-session-refresh", { roomId });
+  });
+
+  // ============ Chủ phòng mời thành viên ra khỏi phòng (KICK) ============
+  socket.on("kick-user", async ({ roomId, targetUserId }) => {
+    try {
+      if (!roomId || !targetUserId) {
+        throw new Error("Thiếu thông tin phòng hoặc người dùng");
+      }
+
+      const room = await Room.findById(roomId);
+      if (!room) throw new Error("Không tìm thấy phòng");
+
+      // Chỉ chủ phòng (hoặc admin) mới được kick
+      const session = await DiscussionSession.findOne({ room: roomId }).select("coHosts");
+      const isOwner = room.owner?.toString() === userId;
+      const isCoHost = session?.coHosts?.some((id) => String(id) === String(userId));
+      const isAdmin = socket.user.role === "ADMIN";
+      if (!isOwner && !isCoHost && !isAdmin) {
+        throw new Error("Chỉ chủ phòng mới có quyền mời thành viên ra ngoài");
+      }
+
+      // Không thể tự kick chính mình
+      if (targetUserId === userId) {
+        throw new Error("Bạn không thể tự mời chính mình ra ngoài");
+      }
+
+      // Tìm tất cả socket của người bị kick trong phòng này
+      const socketsInRoom = await io.in(roomId).fetchSockets();
+      const targetSockets = socketsInRoom.filter(
+        (s) => s.user?.id === targetUserId,
+      );
+
+      // Cập nhật trạng thái rời phòng trong DB
+      try {
+        await leaveRoom(roomId, targetUserId);
+      } catch (e) {
+        console.error("Lỗi khi cập nhật leaveRoom lúc kick:", e.message);
+      }
+
+      // Thông báo cho người bị kick và buộc rời phòng
+      for (const ts of targetSockets) {
+        io.to(ts.id).emit("kicked", {
+          roomId,
+          message: "Bạn đã bị chủ phòng mời ra khỏi phòng học.",
+        });
+        ts.leave(roomId);
+      }
+
+      // Thông báo cho mọi người còn lại
+      io.to(roomId).emit("user-left", {
+        userId: targetUserId,
+        reason: "kicked",
+      });
+
+      // Cập nhật lại danh sách online
+      const remaining = await io.in(roomId).fetchSockets();
+      const onlineUsers = remaining.map((s) => ({
+        userId: s.user?.id,
+        userName: s.user?.displayName || "User",
+        avatar: s.user?.avatar,
+        socketId: s.id,
+      }));
+      io.to(roomId).emit("room-users", onlineUsers);
+
+      // Tin nhắn hệ thống trong chat
+      io.to(roomId).emit("chat-message", {
+        userId: "system",
+        displayName: "System",
+        message: "👮 Một thành viên đã bị chủ phòng mời ra khỏi phòng.",
+        type: "SYSTEM",
+        timestamp: new Date().toISOString(),
+      });
+
+      console.log(
+        `[KICK] Owner ${userId} kicked user ${targetUserId} from room ${roomId}`,
+      );
+    } catch (error) {
+      socket.emit("error", { message: error.message });
     }
   });
 };

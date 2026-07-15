@@ -1,9 +1,17 @@
 const roomService = require("../services/room.service");
 const subscriptionService = require("../services/subscription.service");
+const { sendRoomReminderForRoom } = require("../jobs/reminder.job");
 
 const createRoom = async (req, reply) => {
   try {
     const room = await roomService.createRoom(req.user.id, req.body);
+    try {
+      // If the selected reminder time has already arrived, notify immediately.
+      // The unique reminder key keeps this safe when the cron job runs later.
+      await sendRoomReminderForRoom(global.io, room, new Date());
+    } catch (reminderError) {
+      req.log.error({ err: reminderError }, "Could not create immediate room reminder");
+    }
     reply.code(201).send(room);
   } catch (error) {
     reply.code(400).send({ message: error.message });
@@ -42,7 +50,13 @@ const getRooms = async (req, reply) => {
 const getRoom = async (req, reply) => {
   try {
     const room = await roomService.getRoomById(req.params.id);
-    reply.send(room);
+    const roomObj = room.toObject ? room.toObject() : room;
+    const hasPassword = !!room.password;
+    delete roomObj.password;
+    reply.send({
+      ...roomObj,
+      hasPassword,
+    });
   } catch (error) {
     reply.code(404).send({ message: error.message });
   }
@@ -122,14 +136,7 @@ const closeRoom = async (req, reply) => {
  */
 const checkJoinEligibility = async (req, reply) => {
   try {
-    const User = require("../models/User");
-
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return reply
-        .code(404)
-        .send({ canJoin: false, message: "User not found" });
-    }
+    const user = req.user;
 
     // Use subscription service for eligibility check
     const eligibility = subscriptionService.checkJoinRoomEligibility(user);
@@ -163,14 +170,7 @@ const checkJoinEligibility = async (req, reply) => {
  */
 const checkCreateEligibility = async (req, reply) => {
   try {
-    const User = require("../models/User");
-
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return reply
-        .code(404)
-        .send({ canCreate: false, message: "User not found" });
-    }
+    const user = req.user;
 
     const eligibility = subscriptionService.checkRoomCreationEligibility(user);
     const tierLimits = subscriptionService.getTierLimits(
@@ -211,7 +211,6 @@ const getCategories = async (req, reply) => {
 const checkMicPermission = async (req, reply) => {
   try {
     const Room = require("../models/Room");
-    const User = require("../models/User");
 
     const room = await Room.findById(req.params.id);
     if (!room) {
@@ -221,13 +220,7 @@ const checkMicPermission = async (req, reply) => {
       });
     }
 
-    const user = await User.findById(req.user.id);
-    if (!user) {
-      return reply.code(404).send({
-        canUseMic: false,
-        message: "User not found",
-      });
-    }
+    const user = req.user;
 
     const permission = subscriptionService.checkMicPermission(user, room);
 
@@ -249,12 +242,7 @@ const checkMicPermission = async (req, reply) => {
  */
 const getAvailableRoomTypes = async (req, reply) => {
   try {
-    const User = require("../models/User");
-    const user = await User.findById(req.user.id);
-
-    if (!user) {
-      return reply.code(404).send({ message: "User not found" });
-    }
+    const user = req.user;
 
     const tier = subscriptionService.getEffectiveTier(user);
     const isAdmin = user.role === "ADMIN";

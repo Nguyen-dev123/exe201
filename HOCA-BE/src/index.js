@@ -1,12 +1,33 @@
 const buildApp = require("./app");
 const connectDatabase = require("./config/database");
-const { PORT, CLIENT_URL } = require("./config/env");
+const { PORT, CLIENT_URL, NODE_ENV } = require("./config/env");
 const { Server } = require("socket.io");
+
+const validateProductionConfig = () => {
+  if (NODE_ENV !== "production") return;
+  const required = [
+    "MONGODB_URI", "JWT_SECRET", "CLIENT_URL", "CRON_SECRET",
+    "EMAIL_HOST", "EMAIL_PORT", "EMAIL_USER", "EMAIL_PASSWORD",
+    "CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET",
+    "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+  ];
+  const missing = required.filter((key) => !process.env[key] || /your-|localhost/i.test(process.env[key]));
+  const payosReady = ["PAYOS_CLIENT_ID", "PAYOS_API_KEY", "PAYOS_CHECKSUM_KEY"].every((key) => process.env[key]);
+  const vnpayReady = ["VNPAY_TMN_CODE", "VNPAY_HASH_SECRET", "VNPAY_URL", "VNPAY_RETURN_URL"].every((key) => process.env[key]);
+  if (!payosReady && !vnpayReady) missing.push("PAYOS_* or VNPAY_*");
+  if ((process.env.CRON_SECRET || "").length < 32) missing.push("CRON_SECRET(min 32 chars)");
+  if (!/^https:\/\//.test(process.env.CLIENT_URL || "")) missing.push("CLIENT_URL(https)");
+  if (missing.length) throw new Error(`Missing or unsafe production configuration: ${[...new Set(missing)].join(", ")}`);
+};
 
 const startServer = async () => {
   try {
+    validateProductionConfig();
     // 1. Connect to Database
     const dbConnected = await connectDatabase();
+    if (dbConnected === false && NODE_ENV === "production") {
+      throw new Error("Database connection is required in production");
+    }
 
     // Seed Ranks only if DB is connected
     if (dbConnected !== false) {
@@ -14,7 +35,14 @@ const startServer = async () => {
         const { seedDefaultRanks } = require("./services/rank.service");
         await seedDefaultRanks();
       } catch (err) {
-        console.log("⚠️  Skipping seed (no database)");
+        console.log("⚠️  Rank seed warning:", err.message);
+      }
+      try {
+        // Keep concurrent socket reconnects from creating duplicate active
+        // study sessions. createIndexes is additive and does not drop indexes.
+        await require("./models/StudySession").createIndexes();
+      } catch (err) {
+        console.log("⚠️  Study session index warning:", err.message);
       }
     }
 
@@ -44,11 +72,11 @@ const startServer = async () => {
             "https://www.hoca.asia",
             CLIENT_URL,
           ].filter(Boolean);
-          const isLanOrigin =
+          const isLanOrigin = NODE_ENV !== "production" &&
             /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(
               origin,
             );
-          const isTunnelOrigin =
+          const isTunnelOrigin = NODE_ENV !== "production" &&
             /\.(trycloudflare\.com|ngrok\.io|ngrok-free\.app|loca\.lt|vercel\.app)$/.test(
               origin,
             );
@@ -69,6 +97,7 @@ const startServer = async () => {
     });
 
     require("./socket")(io);
+    global.io = io;
 
     // 5. Init Jobs and pass io instance for room auto-close notifications (only if DB connected)
     if (dbConnected !== false) {
@@ -80,12 +109,14 @@ const startServer = async () => {
         // 6. Init Cleanup Job (delete unverified accounts after 24h)
         const { startCleanupJob } = require("./jobs/cleanup.job");
         startCleanupJob();
+
+        const { startReminderJob } = require("./jobs/reminder.job");
+        startReminderJob(io);
       } catch (err) {
         console.log("⚠️  Skipping cron jobs (no database)");
       }
     }
 
-    global.io = io;
   } catch (error) {
     console.error(error);
     process.exit(1);

@@ -35,6 +35,12 @@ const roomSchema = new mongoose.Schema(
       default: "POMODORO_25_5",
     },
 
+    studyGoal: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "StudyGoal",
+      default: null,
+    },
+
     // Status
     isActive: { type: Boolean, default: true },
     closedAt: Date,
@@ -46,6 +52,10 @@ const roomSchema = new mongoose.Schema(
 
     // Active Participants (for checking limit < 50)
     activeParticipants: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    scheduledFor: { type: Date, default: null, index: true },
+    reminderMinutes: { type: Number, min: 0, max: 10080, default: 15 },
+    averageRating: { type: Number, min: 0, max: 5, default: 0 },
+    ratingCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

@@ -1,4 +1,6 @@
 const Badge = require('../models/Badge');
+const User = require('../models/User');
+const { logAdminAction } = require('../services/admin-audit.service');
 const { getUserBadgesWithProgress, checkAndUnlockBadges } = require('../services/badge.service');
 
 const createBadge = async (req, reply) => {
@@ -17,6 +19,13 @@ const createBadge = async (req, reply) => {
             type,
             threshold,
             color
+        });
+
+        await logAdminAction(req, 'CREATE_BADGE', {
+            targetType: 'BADGE',
+            targetId: badge._id,
+            targetLabel: badge.name,
+            metadata: { type: badge.type, threshold: badge.threshold }
         });
 
         reply.code(201).send(badge);
@@ -68,6 +77,11 @@ const updateBadge = async (req, reply) => {
         if (!badge) {
             return reply.code(404).send({ message: 'Badge not found' });
         }
+        await logAdminAction(req, 'UPDATE_BADGE', {
+            targetType: 'BADGE',
+            targetId: badge._id,
+            targetLabel: badge.name
+        });
         reply.send(badge);
     } catch (error) {
         reply.code(400).send({ message: error.message });
@@ -81,6 +95,15 @@ const deleteBadge = async (req, reply) => {
         if (!badge) {
             return reply.code(404).send({ message: 'Badge not found' });
         }
+        await User.updateMany(
+            { badges: badge._id },
+            { $pull: { badges: badge._id } }
+        );
+        await logAdminAction(req, 'DELETE_BADGE', {
+            targetType: 'BADGE',
+            targetId: badge._id,
+            targetLabel: badge.name
+        });
         reply.send({ message: 'Badge deleted' });
     } catch (error) {
         reply.code(400).send({ message: error.message });

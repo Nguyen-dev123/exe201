@@ -8,6 +8,9 @@ const register = async (req, reply) => {
     if (!displayName || !email || !password) {
       return reply.code(400).send({ message: "Missing required fields" });
     }
+    if (password.length < 6) {
+      return reply.code(400).send({ message: "Password must be at least 6 characters" });
+    }
 
     const result = await authService.registerUser({
       displayName,
@@ -18,12 +21,15 @@ const register = async (req, reply) => {
     reply.code(201).send({
       message: result.message,
       user: result.user,
-      token: result.token,
-      refreshToken: result.refreshToken,
-      requiresVerification: false,
+      otpSent: result.otpSent,
+      developmentCode: result.developmentCode,
+      requiresVerification: true,
     });
   } catch (error) {
-    reply.code(400).send({ message: error.message });
+    reply.code(error.statusCode || 400).send({
+      message: error.message,
+      code: error.code,
+    });
   }
 };
 
@@ -31,21 +37,22 @@ const verifyOtp = async (req, reply) => {
   try {
     const { email, code } = req.body;
 
-    if (!email || !code) {
+    if (!email || !code || !/^\d{6}$/.test(String(code))) {
       return reply
         .code(400)
-        .send({ message: "Email and verification code are required" });
+        .send({ message: "Email and a 6-digit verification code are required" });
     }
 
-    const { user, token } = await authService.verifyOtp(email, code);
+    const { user, token, refreshToken } = await authService.verifyOtp(email, code, { userAgent: req.headers['user-agent'], ip: req.ip });
 
     reply.send({
       message: "Email verified successfully. Welcome to HOCA!",
       user,
       token,
+      refreshToken,
     });
   } catch (error) {
-    reply.code(400).send({ message: error.message });
+    reply.code(error.statusCode || 400).send({ message: error.message, code: error.code });
   }
 };
 
@@ -61,7 +68,7 @@ const resendOtp = async (req, reply) => {
 
     reply.send(result);
   } catch (error) {
-    reply.code(400).send({ message: error.message });
+    reply.code(error.statusCode || 400).send({ message: error.message, code: error.code });
   }
 };
 
@@ -73,10 +80,15 @@ const login = async (req, reply) => {
       return reply.code(400).send({ message: "Missing email or password" });
     }
 
-    const { user, token, refreshToken } = await authService.loginUser({
+    const result = await authService.loginUser({
       email,
       password,
-    });
+    }, { userAgent: req.headers['user-agent'], ip: req.ip });
+
+    if (result.requiresTwoFactor) {
+      return reply.send({ requiresTwoFactor: true, challengeToken: result.challengeToken });
+    }
+    const { user, token, refreshToken } = result;
 
     reply.send({
       message: "Login successful",
@@ -116,7 +128,7 @@ const forgotPassword = async (req, reply) => {
 
     reply.send({ message: "Email sent" });
   } catch (error) {
-    reply.code(400).send({ message: error.message });
+    reply.code(error.statusCode || 400).send({ message: error.message, code: error.code });
   }
 };
 
@@ -125,18 +137,20 @@ const resetPassword = async (req, reply) => {
     const { token } = req.params;
     const { password } = req.body;
 
-    if (!password) {
-      return reply.code(400).send({ message: "New password is required" });
+    if (!password || password.length < 6) {
+      return reply.code(400).send({ message: "New password must be at least 6 characters" });
     }
 
-    const { user, token: newToken } = await authService.resetPassword(
+    const { user, token: newToken, refreshToken } = await authService.resetPassword(
       token,
       password,
+      { userAgent: req.headers['user-agent'], ip: req.ip },
     );
 
     reply.send({
       message: "Password reset successful",
       token: newToken,
+      refreshToken,
       user,
     });
   } catch (error) {
@@ -152,7 +166,7 @@ const googleLogin = async (req, reply) => {
     }
 
     const { user, token, refreshToken } =
-      await authService.googleLogin(idToken);
+      await authService.googleLogin(idToken, { userAgent: req.headers['user-agent'], ip: req.ip });
 
     reply.send({
       message: "Google login successful",
@@ -184,6 +198,51 @@ const refreshToken = async (req, reply) => {
   }
 };
 
+const verifyTwoFactorLogin = async (req, reply) => {
+  try {
+    const result = await authService.completeTwoFactorLogin(
+      req.body?.challengeToken,
+      req.body?.code,
+      { userAgent: req.headers['user-agent'], ip: req.ip },
+    );
+    reply.send({ message: 'Login successful', ...result });
+  } catch (error) { reply.code(401).send({ message: error.message }); }
+};
+const beginTwoFactorSetup = async (req, reply) => {
+  try { reply.send(await authService.beginTwoFactorSetup(req.user._id)); }
+  catch (error) { reply.code(400).send({ message: error.message }); }
+};
+const confirmTwoFactorSetup = async (req, reply) => {
+  try { await authService.confirmTwoFactorSetup(req.user._id, req.body?.code); reply.send({ success: true }); }
+  catch (error) { reply.code(400).send({ message: error.message }); }
+};
+const disableTwoFactor = async (req, reply) => {
+  try { await authService.disableTwoFactor(req.user._id, req.body?.password, req.body?.code); reply.send({ success: true }); }
+  catch (error) { reply.code(400).send({ message: error.message }); }
+};
+
+const getSessions = async (req, reply) => {
+  const sessions = await authService.listSessions(req.user._id);
+  reply.send(sessions.map((session) => ({
+    ...session,
+    current: session.sessionId === req.userSessionId,
+  })));
+};
+const revokeSession = async (req, reply) => {
+  try { await authService.revokeSession(req.user._id, req.params.sessionId); reply.send({ success: true }); }
+  catch (error) { reply.code(404).send({ message: error.message }); }
+};
+const logoutCurrent = async (req, reply) => {
+  if (req.userSessionId) {
+    await authService.revokeSession(req.user._id, req.userSessionId);
+  }
+  reply.send({ success: true });
+};
+const logoutAll = async (req, reply) => {
+  await authService.revokeAllSessions(req.user._id);
+  reply.send({ success: true });
+};
+
 module.exports = {
   register,
   login,
@@ -194,4 +253,12 @@ module.exports = {
   verifyOtp,
   resendOtp,
   refreshToken,
+  getSessions,
+  revokeSession,
+  logoutCurrent,
+  logoutAll,
+  verifyTwoFactorLogin,
+  beginTwoFactorSetup,
+  confirmTwoFactorSetup,
+  disableTwoFactor,
 };

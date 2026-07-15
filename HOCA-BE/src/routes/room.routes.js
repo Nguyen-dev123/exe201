@@ -1,5 +1,6 @@
 const roomController = require("../controllers/room.controller");
 const { protect } = require("../middlewares/auth.middleware");
+const extras = require('../controllers/room-extra.controller');
 
 const roomRoutes = async (fastify, options) => {
   fastify.addHook("onRequest", protect);
@@ -14,6 +15,16 @@ const roomRoutes = async (fastify, options) => {
     roomController.checkCreateEligibility,
   ); // Check before creating
   fastify.get("/room-types", roomController.getAvailableRoomTypes); // Get available room types based on tier
+  fastify.get('/invitations', extras.invitations);
+  fastify.patch('/invitations/:inviteId', extras.respondInvite);
+  fastify.get('/recent', extras.recent);
+  fastify.get('/history', extras.history);
+  fastify.get('/favorites', extras.favorites);
+  fastify.post('/:id/invites', extras.invite);
+  fastify.post('/:id/favorite', extras.favorite);
+  fastify.delete('/:id/favorite', extras.unfavorite);
+  fastify.get('/:id/export', extras.exportRoom);
+  fastify.post('/:id/rating', extras.rate);
   fastify.get("/:id", roomController.getRoom);
   fastify.get("/:id/mic-permission", roomController.checkMicPermission); // Check mic permission in room
   fastify.post("/:id/join", roomController.joinRoom);

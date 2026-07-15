@@ -53,16 +53,63 @@ const uploadImage = async (fileBuffer, options = {}) => {
     });
 };
 
+const uploadDocument = async (fileBuffer, options = {}) => {
+    const { folder = 'discussion-documents', filename } = options;
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            {
+                folder,
+                resource_type: 'raw',
+                public_id: filename ? `${Date.now()}_${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}` : undefined,
+            },
+            (error, result) => {
+                if (error) reject(error);
+                else resolve({ url: result.secure_url, publicId: result.public_id });
+            },
+        );
+        uploadStream.end(fileBuffer);
+    });
+};
+
+const uploadMedia = async (fileBuffer, options = {}) => {
+    const { folder = 'ad-media', resourceType = 'image' } = options;
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            {
+                folder,
+                resource_type: resourceType,
+                quality: resourceType === 'image' ? 'auto' : undefined,
+                fetch_format: resourceType === 'image' ? 'auto' : undefined,
+            },
+            (error, result) => {
+                if (error) reject(error);
+                else resolve({
+                    url: result.secure_url,
+                    publicId: result.public_id,
+                    resourceType: result.resource_type,
+                    bytes: result.bytes,
+                    width: result.width,
+                    height: result.height,
+                    duration: result.duration,
+                });
+            },
+        );
+        uploadStream.end(fileBuffer);
+    });
+};
+
 /**
  * Delete an image from Cloudinary
  * @param {string} publicId - The public ID of the image to delete
  * @returns {Promise<void>}
  */
-const deleteImage = async (publicId) => {
-    await cloudinary.uploader.destroy(publicId);
+const deleteImage = async (publicId, resourceType = 'image') => {
+    await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
 };
 
 module.exports = {
     uploadImage,
+    uploadMedia,
+    uploadDocument,
     deleteImage
 };

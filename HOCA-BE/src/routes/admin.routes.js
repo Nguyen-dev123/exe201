@@ -13,9 +13,14 @@ const adminRoutes = async (fastify, options) => {
   fastify.get('/users/:id', adminController.getUserDetails);
   fastify.put('/users/:id/block', adminController.toggleBlockUser);
   fastify.put('/users/:id/lock', adminController.toggleLockUser);
+  fastify.put('/users/:id/subscription', adminController.updateUserSubscription);
+  fastify.post('/users/:id/force-leave', adminController.forceLeaveUserRooms);
+  fastify.post('/users/:id/ai-usage/reset', adminController.resetUserAIUsage);
 
   // Dashboard Stats
   fastify.get('/stats', adminController.getSystemStats);
+  fastify.get('/audit-logs', adminController.getAuditLogs);
+  fastify.post('/notifications/broadcast', adminController.broadcastNotification);
 
   // Rooms
   fastify.get('/rooms', adminController.getAllRooms);

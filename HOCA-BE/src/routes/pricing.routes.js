@@ -5,9 +5,6 @@ const pricingRoutes = async (fastify, options) => {
   // Public
   fastify.get("/", pricingController.getPlans);
 
-  // Public seed endpoint (for development)
-  fastify.post("/seed", pricingController.seedPlans);
-
   // Admin Only
   fastify.register(async (adminRoutes) => {
     adminRoutes.addHook("onRequest", protect);
@@ -16,6 +13,7 @@ const pricingRoutes = async (fastify, options) => {
     adminRoutes.post("/", pricingController.createPlan);
     adminRoutes.put("/:id", pricingController.updatePlan);
     adminRoutes.delete("/:id", pricingController.deletePlan);
+    adminRoutes.post("/seed", pricingController.seedPlans);
 
     // Quick update endpoint for Yearly and Lifetime plans
     adminRoutes.post("/quick-update", pricingController.quickUpdatePrices);

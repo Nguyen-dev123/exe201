@@ -21,6 +21,24 @@ services:
       # Frontend URL (set to your Vercel domain after deploying frontend)
       - key: CLIENT_URL
         sync: false
+      - key: CRON_SECRET
+        generateValue: true
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: 465
+      - key: EMAIL_SECURE
+        value: true
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
       # AI assistant (optional - Groq recommended, free)
       - key: GROQ_API_KEY
         sync: false
@@ -46,5 +64,14 @@ services:
       - key: PAYOS_API_KEY
         sync: false
       - key: PAYOS_CHECKSUM_KEY
+        sync: false
+      # VNPay online payment gateway (set in Render dashboard after registering merchant)
+      - key: VNPAY_TMN_CODE
+        sync: false
+      - key: VNPAY_HASH_SECRET
+        sync: false
+      - key: VNPAY_URL
+        sync: false
+      - key: VNPAY_RETURN_URL
         sync: false
     autoDeploy: true

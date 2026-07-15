@@ -24,7 +24,7 @@ const AI_CONFIG = {
     process.env.OPENROUTER_MODEL || "arcee-ai/trinity-large-preview:free",
 
   // Daily limits
-  FREE_DAILY_LIMIT: 5,
+  FREE_DAILY_LIMIT: 15,
 
   // Groq (free, fast, reliable) - used when GROQ_API_KEY is set
   GROQ_API_URL: "https://api.groq.com/openai/v1/chat/completions",
@@ -58,18 +58,37 @@ Hãy trả lời câu hỏi của học viên:`,
  * @param {Object} user - User object with subscription info
  * @returns {Object} { canAsk, remaining, limit, message }
  */
-async function checkAILimit(user) {
-  // AI is unlimited for all users (no daily cap)
+async function checkAILimit(user, scope = "MAIN") {
   const tier = subscriptionService.getEffectiveTier(user);
-  const isPremium = tier !== "FREE";
+  const hasRoomUnlimitedAccess = tier !== "FREE" || user?.role === "ADMIN";
 
+  if (scope === "ROOM") {
+    return {
+      canAsk: hasRoomUnlimitedAccess,
+      remaining: hasRoomUnlimitedAccess ? -1 : 0,
+      limit: hasRoomUnlimitedAccess ? -1 : 0,
+      used: 0,
+      isPremium: hasRoomUnlimitedAccess,
+      message: hasRoomUnlimitedAccess
+        ? null
+        : "AI trong phòng thảo luận chỉ dành cho thành viên HOCA+. Hãy nâng cấp để sử dụng không giới hạn.",
+    };
+  }
+
+  // The standalone AI page is the free product preview for every account.
+  // Paid plans unlock unlimited AI only inside rooms, not on /ai.
+  const usage = await AIUsage.getTodayUsage(user._id);
+  const used = usage.freeMainQuestionCount || 0;
+  const remaining = Math.max(0, AI_CONFIG.FREE_DAILY_LIMIT - used);
   return {
-    canAsk: true,
-    remaining: -1, // -1 means unlimited
-    limit: -1,
-    used: 0,
-    isPremium,
-    message: null,
+    canAsk: remaining > 0,
+    remaining,
+    limit: AI_CONFIG.FREE_DAILY_LIMIT,
+    used,
+    isPremium: false,
+    message: remaining > 0
+      ? null
+      : "Bạn đã dùng hết 15 câu hỏi miễn phí hôm nay. Lượt hỏi sẽ tự đặt lại lúc 00:00 hoặc bạn có thể nâng cấp HOCA+ để dùng AI không giới hạn trong phòng thảo luận.",
   };
 }
 
@@ -78,16 +97,18 @@ async function checkAILimit(user) {
  * @param {Object} user - User object
  * @returns {Object} AI availability status
  */
-async function getAIStatus(user) {
+async function getAIStatus(user, scope = "MAIN") {
   if (!user || !user._id) {
     throw new Error("User is required to get AI status");
   }
 
-  const limitInfo = await checkAILimit(user);
+  const limitInfo = await checkAILimit(user, scope);
 
   return {
     available: true,
     model: AI_CONFIG.DEFAULT_MODEL,
+    scope,
+    resetAt: scope === "MAIN" && !limitInfo.isPremium ? "00:00" : null,
     ...limitInfo,
   };
 }
@@ -196,11 +217,11 @@ async function callFreeProvider(messages) {
  * @param {Array} conversationHistory - Previous messages for context
  * @returns {AsyncGenerator} Yields response chunks
  */
-async function* streamAIResponse(question, user, conversationHistory = []) {
+async function* streamAIResponse(question, user, conversationHistory = [], scope = "MAIN") {
   const apiKey = process.env.OPENROUTER_API_KEY;
 
   // Check limit for FREE users
-  const limitInfo = await checkAILimit(user);
+  const limitInfo = await checkAILimit(user, scope);
   if (!limitInfo.canAsk) {
     yield {
       type: "limit_reached",
@@ -209,6 +230,22 @@ async function* streamAIResponse(question, user, conversationHistory = []) {
       limit: limitInfo.limit,
     };
     return;
+  }
+
+  if (scope === "MAIN" && !limitInfo.isPremium) {
+    const reservation = await AIUsage.reserveFreeMainQuestion(
+      user._id,
+      AI_CONFIG.FREE_DAILY_LIMIT,
+    );
+    if (!reservation) {
+      yield {
+        type: "limit_reached",
+        content: "Bạn đã dùng hết 15 câu hỏi miễn phí hôm nay. Lượt hỏi sẽ tự đặt lại lúc 00:00.",
+        remaining: 0,
+        limit: AI_CONFIG.FREE_DAILY_LIMIT,
+      };
+      return;
+    }
   }
 
   // Build messages array
@@ -359,14 +396,41 @@ async function* streamAIResponse(question, user, conversationHistory = []) {
 /**
  * Non-streaming AI call (for simpler use cases)
  */
-async function askAI(question, user, conversationHistory = []) {
-  const limitInfo = await checkAILimit(user);
+async function askAI(question, user, conversationHistory = [], scope = "MAIN", options = {}) {
+  const limitInfo = await checkAILimit(user, scope);
   if (!limitInfo.canAsk) {
-    throw new Error(limitInfo.message);
+    const error = new Error(limitInfo.message);
+    error.code = scope === "ROOM" ? "ROOM_AI_PREMIUM_REQUIRED" : "AI_DAILY_LIMIT_REACHED";
+    error.status = scope === "ROOM" ? 403 : 429;
+    throw error;
   }
 
+  if (scope === "MAIN" && !limitInfo.isPremium) {
+    const reservation = await AIUsage.reserveFreeMainQuestion(
+      user._id,
+      AI_CONFIG.FREE_DAILY_LIMIT,
+    );
+    if (!reservation) {
+      const error = new Error(
+        "Bạn đã dùng hết 15 câu hỏi miễn phí hôm nay. Lượt hỏi sẽ tự đặt lại lúc 00:00.",
+      );
+      error.code = "AI_DAILY_LIMIT_REACHED";
+      error.status = 429;
+      throw error;
+    }
+  }
+
+  const levelInstructions = {
+    SIMPLE: "Giải thích ngắn gọn, dùng từ đơn giản và ví dụ trực quan.",
+    STANDARD: "Giải thích cân bằng giữa khái niệm, ví dụ và cách áp dụng.",
+    ADVANCED: "Giải thích chuyên sâu, nêu giả định, công thức và các trường hợp biên khi phù hợp.",
+  };
+  const subject = String(options.subject || "Chung").trim().slice(0, 80);
+  const level = ["SIMPLE", "STANDARD", "ADVANCED"].includes(options.explanationLevel)
+    ? options.explanationLevel : "STANDARD";
+  const contextualPrompt = `${AI_CONFIG.SYSTEM_PROMPT}\nMôn/chủ đề ưu tiên: ${subject}. ${levelInstructions[level]} Khi dùng dữ kiện có thể kiểm chứng, hãy kèm URL nguồn đáng tin cậy.`;
   const messages = [
-    { role: "system", content: AI_CONFIG.SYSTEM_PROMPT },
+    { role: "system", content: contextualPrompt },
     ...conversationHistory.slice(-6),
     { role: "user", content: question },
   ];
@@ -440,9 +504,14 @@ async function askAI(question, user, conversationHistory = []) {
     tokensUsed,
   });
 
+  const urls = [...new Set(aiResponse.match(/https?:\/\/[^\s)\]}>,]+/g) || [])].slice(0, 5);
   return {
     response: aiResponse,
     remaining: limitInfo.isPremium ? -1 : limitInfo.remaining - 1,
+    sources: urls.map((url) => {
+      try { return { title: new URL(url).hostname, url }; }
+      catch { return { title: url, url }; }
+    }),
   };
 }
 

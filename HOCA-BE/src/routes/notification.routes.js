@@ -7,6 +7,8 @@ const notificationRoutes = async (fastify, options) => {
     fastify.get('/unread-count', { preHandler: [protect] }, notificationController.getUnreadCount);
     fastify.post('/mark-read', { preHandler: [protect] }, notificationController.markAsRead);
     fastify.delete('/old', { preHandler: [protect] }, notificationController.deleteOldNotifications);
+    fastify.patch('/:id/archive', { preHandler: [protect] }, notificationController.archiveNotification);
+    fastify.delete('/:id', { preHandler: [protect] }, notificationController.deleteNotification);
 };
 
 module.exports = notificationRoutes;

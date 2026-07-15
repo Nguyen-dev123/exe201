@@ -1,5 +1,6 @@
 const Sticker = require('../models/Sticker');
 const { uploadImage, deleteImage } = require('../services/upload.service');
+const { logAdminAction } = require('../services/admin-audit.service');
 
 const getAllStickers = async (req, reply) => {
     try {
@@ -53,6 +54,11 @@ const createSticker = async (req, reply) => {
         });
 
         await sticker.save();
+        await logAdminAction(req, 'CREATE_STICKER', {
+            targetType: 'STICKER',
+            targetId: sticker._id,
+            targetLabel: sticker.name
+        });
         reply.code(201).send(sticker);
 
     } catch (error) {
@@ -77,6 +83,12 @@ const deleteSticker = async (req, reply) => {
 
         // Delete from DB
         await Sticker.findByIdAndDelete(id);
+
+        await logAdminAction(req, 'DELETE_STICKER', {
+            targetType: 'STICKER',
+            targetId: sticker._id,
+            targetLabel: sticker.name
+        });
 
         reply.send({ message: 'Sticker deleted successfully' });
     } catch (error) {

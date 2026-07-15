@@ -12,6 +12,8 @@ const adPlacementSchema = new mongoose.Schema({
             default: 'image'
         },
         content: { type: String }, // URL for image/video
+        publicId: { type: String },
+        resourceType: { type: String, enum: ['image', 'video'] },
         embedCode: { type: String }, // HTML/iframe/script for embed type
         targetUrl: { type: String }, // Destination URL for this content (optional for embed ads)
         priority: { type: Number, default: 5, min: 1, max: 10 }, // Priority để rotate content
@@ -86,9 +88,9 @@ adPlacementSchema.statics.getAdsForPosition = async function (positionName) {
         status: 'Active',
         'positions.position': positionName,
         'positions.isEnabled': true,
-        $or: [
-            { startDate: { $lte: now }, endDate: { $gte: now } },
-            { startDate: null, endDate: null }
+        $and: [
+            { $or: [{ startDate: null }, { startDate: { $exists: false } }, { startDate: { $lte: now } }] },
+            { $or: [{ endDate: null }, { endDate: { $exists: false } }, { endDate: { $gte: now } }] }
         ]
     });
 };

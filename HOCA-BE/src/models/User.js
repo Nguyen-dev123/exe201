@@ -54,9 +54,13 @@ const userSchema = new mongoose.Schema(
     lockReason: { type: String, default: "" },
     notificationEnabled: { type: Boolean, default: true },
     isOnboarded: { type: Boolean, default: false },
+    profileVisibility: { type: String, enum: ["PUBLIC", "MEMBERS", "PRIVATE"], default: "PUBLIC" },
+    showStudyStats: { type: Boolean, default: true },
+    searchable: { type: Boolean, default: true },
 
     // Arrays
     badges: [{ type: mongoose.Schema.Types.ObjectId, ref: "Badge" }],
+    favoriteRooms: [{ type: mongoose.Schema.Types.ObjectId, ref: "Room" }],
 
     // Room Tracking
     currentRoomId: {
@@ -101,10 +105,22 @@ const userSchema = new mongoose.Schema(
     },
     verificationCode: { type: String, select: false },
     verificationCodeExpires: { type: Date, select: false },
+    verificationCodeSentAt: { type: Date, select: false },
+    verificationAttempts: { type: Number, default: 0, select: false },
 
     // Auth Recovery
     resetPasswordToken: { type: String, select: false },
     resetPasswordExpire: { type: Date, select: false },
+    authVersion: { type: Number, default: 0, select: false },
+    accountDeletionCode: { type: String, select: false },
+    accountDeletionExpires: { type: Date, select: false },
+    accountDeletionAttempts: { type: Number, default: 0, select: false },
+    twoFactorEnabled: { type: Boolean, default: false },
+    twoFactorSecret: { type: String, select: false },
+    twoFactorPendingSecret: { type: String, select: false },
+    pendingEmail: { type: String, select: false },
+    emailChangeCode: { type: String, select: false },
+    emailChangeExpires: { type: Date, select: false },
   },
   {
     timestamps: true,
@@ -126,6 +142,9 @@ userSchema.virtual("isPremium").get(function () {
   }
   return true;
 });
+
+userSchema.index({ role: 1, totalStudyMinutes: -1 });
+userSchema.index({ role: 1, currentStreak: -1 });
 
 // Hash password before saving
 userSchema.pre("save", async function () {

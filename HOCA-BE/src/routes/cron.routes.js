@@ -6,9 +6,7 @@ const cronRoutes = async (fastify, options) => {
   fastify.get("/cleanup", cronController.runCleanup);
   fastify.get("/streak-maintenance", cronController.runStreakMaintenance);
   fastify.get("/room-maintenance", cronController.runRoomMaintenance);
-  fastify.get("/fix-rooms-public", cronController.fixRoomsPublic);
-  fastify.get("/check-rooms-ownership", cronController.checkRoomsOwnership);
-  fastify.get("/list-all-rooms", cronController.listAllRooms);
+  fastify.get("/payos-reconciliation", cronController.runPayosReconciliation);
 };
 
 module.exports = cronRoutes;

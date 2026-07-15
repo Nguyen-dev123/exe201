@@ -2,6 +2,24 @@ const AdConfig = require('../models/AdConfig');
 const AdPlacement = require('../models/AdPlacement');
 const AdView = require('../models/AdView');
 const User = require('../models/User');
+const AdminAuditLog = require('../models/AdminAuditLog');
+const { deleteImage } = require('../services/upload.service');
+
+const writeAdAuditLog = async (req, action, placement, metadata = {}) => {
+    try {
+        await AdminAuditLog.create({
+            admin: req.user._id,
+            action,
+            targetType: placement ? 'AD_PLACEMENT' : 'AD_CONFIG',
+            targetId: placement?._id?.toString() || '',
+            targetLabel: placement?.name || 'Cấu hình quảng cáo',
+            metadata,
+            ip: req.ip || req.headers?.['x-forwarded-for'] || ''
+        });
+    } catch (error) {
+        req.log?.error?.(error, 'Unable to write advertising audit log');
+    }
+};
 
 // ===== HELPER FUNCTIONS =====
 
@@ -31,6 +49,30 @@ const mapPositionKey = (key) => {
     return mapping[key] || key;
 };
 
+const validatePlacementPayload = (payload, { partial = false } = {}) => {
+    if (!partial || payload.name !== undefined) {
+        if (typeof payload.name !== 'string' || !payload.name.trim() || payload.name.trim().length > 120) {
+            return 'Tên chiến dịch phải có từ 1 đến 120 ký tự.';
+        }
+    }
+    if (!partial || payload.contents !== undefined) {
+        if (!Array.isArray(payload.contents) || payload.contents.length === 0) return 'Chiến dịch cần ít nhất một media.';
+        for (const content of payload.contents) {
+            if (!['image', 'video', 'embed'].includes(content.type)) return 'Loại media không hợp lệ.';
+            if (content.type !== 'embed' && !/^https:\/\//i.test(content.content || '')) return 'Đường dẫn media không hợp lệ.';
+            if (content.targetUrl && !/^https?:\/\//i.test(content.targetUrl)) return 'URL đích không hợp lệ.';
+        }
+    }
+    if (!partial || payload.positions !== undefined) {
+        if (!Array.isArray(payload.positions) || payload.positions.length === 0) return 'Vui lòng chọn vị trí hiển thị.';
+        if (payload.positions.some((item) => !['pre-room', 'banner', 'popup'].includes(item.position))) return 'Vị trí hiển thị không hợp lệ.';
+    }
+    if (payload.startDate && payload.endDate && new Date(payload.endDate) <= new Date(payload.startDate)) {
+        return 'Thời gian kết thúc phải sau thời gian bắt đầu.';
+    }
+    return null;
+};
+
 // ===== ADMIN ENDPOINTS =====
 
 // Get ad configuration
@@ -58,6 +100,13 @@ const updateAdConfig = async (req, reply) => {
             streakRecoveryContent,
             streakRecoveryCooldownDays
         } = req.body;
+
+        if (adFrequency !== undefined && (!Number.isFinite(Number(adFrequency)) || Number(adFrequency) < 1 || Number(adFrequency) > 1440)) {
+            return reply.code(400).send({ message: 'Khoảng cách quảng cáo phải từ 1 đến 1.440 phút.' });
+        }
+        if (maxAdsPerUser !== undefined && (!Number.isFinite(Number(maxAdsPerUser)) || Number(maxAdsPerUser) < 0 || Number(maxAdsPerUser) > 100)) {
+            return reply.code(400).send({ message: 'Giới hạn quảng cáo mỗi ngày phải từ 0 đến 100.' });
+        }
 
         let config = await AdConfig.findOne();
         if (!config) {
@@ -93,6 +142,12 @@ const updateAdConfig = async (req, reply) => {
         if (streakRecoveryCooldownDays !== undefined) config.streakRecoveryCooldownDays = streakRecoveryCooldownDays;
 
         await config.save();
+        await writeAdAuditLog(req, 'UPDATE_AD_CONFIG', null, {
+            isActive: config.isActive,
+            vipExemption: config.vipExemption,
+            adFrequency: config.adFrequency,
+            maxAdsPerUser: config.maxAdsPerUser
+        });
         reply.send({ message: 'Configuration updated', config });
     } catch (error) {
         reply.code(500).send({ message: error.message });
@@ -112,8 +167,11 @@ const getAllPlacements = async (req, reply) => {
 // Create placement
 const createPlacement = async (req, reply) => {
     try {
+        const validationError = validatePlacementPayload(req.body);
+        if (validationError) return reply.code(400).send({ message: validationError });
         const placement = new AdPlacement(req.body);
         await placement.save();
+        await writeAdAuditLog(req, 'CREATE_AD_PLACEMENT', placement);
         reply.code(201).send(placement);
     } catch (error) {
         reply.code(500).send({ message: error.message });
@@ -124,10 +182,23 @@ const createPlacement = async (req, reply) => {
 const updatePlacement = async (req, reply) => {
     try {
         const { id } = req.params;
-        const placement = await AdPlacement.findByIdAndUpdate(id, req.body, { new: true });
-        if (!placement) {
+        const validationError = validatePlacementPayload(req.body, { partial: true });
+        if (validationError) return reply.code(400).send({ message: validationError });
+        const existing = await AdPlacement.findById(id);
+        if (!existing) {
             return reply.code(404).send({ message: 'Placement not found' });
         }
+        const previousMedia = (existing.contents || []).filter((content) => content.publicId);
+        Object.assign(existing, req.body);
+        const placement = await existing.save();
+        const currentPublicIds = new Set((placement.contents || []).map((content) => content.publicId).filter(Boolean));
+        await Promise.allSettled(previousMedia
+            .filter((content) => !currentPublicIds.has(content.publicId))
+            .map((content) => deleteImage(content.publicId, content.resourceType || content.type || 'image')));
+        await writeAdAuditLog(req, 'UPDATE_AD_PLACEMENT', placement, {
+            status: placement.status,
+            isEnabled: placement.isEnabled
+        });
         reply.send(placement);
     } catch (error) {
         reply.code(500).send({ message: error.message });
@@ -142,6 +213,10 @@ const deletePlacement = async (req, reply) => {
         if (!placement) {
             return reply.code(404).send({ message: 'Placement not found' });
         }
+        await Promise.allSettled((placement.contents || [])
+            .filter((content) => content.publicId)
+            .map((content) => deleteImage(content.publicId, content.resourceType || content.type || 'image')));
+        await writeAdAuditLog(req, 'DELETE_AD_PLACEMENT', placement);
         reply.send({ message: 'Placement deleted' });
     } catch (error) {
         reply.code(500).send({ message: error.message });
@@ -159,6 +234,9 @@ const togglePlacementStatus = async (req, reply) => {
 
         placement.status = placement.status === 'Active' ? 'Paused' : 'Active';
         await placement.save();
+        await writeAdAuditLog(req, 'TOGGLE_AD_PLACEMENT', placement, {
+            status: placement.status
+        });
         reply.send(placement);
     } catch (error) {
         reply.code(500).send({ message: error.message });

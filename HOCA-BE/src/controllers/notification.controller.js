@@ -5,18 +5,27 @@ const Notification = require('../models/Notification');
  */
 const getNotifications = async (req, reply) => {
     try {
+        if (req.user.notificationEnabled === false) {
+            return reply.send({
+                notifications: [], unreadCount: 0,
+                pagination: { page: 1, limit: 20, total: 0, pages: 0 },
+                disabled: true,
+            });
+        }
         const userId = req.user._id;
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
-        const notifications = await Notification.find({ user: userId })
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
-
-        const total = await Notification.countDocuments({ user: userId });
-        const unreadCount = await Notification.countDocuments({ user: userId, isRead: false });
+        const [notifications, total, unreadCount] = await Promise.all([
+            Notification.find({ user: userId, isArchived: req.query.archived === 'true' })
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Notification.countDocuments({ user: userId, isArchived: req.query.archived === 'true' }),
+            Notification.countDocuments({ user: userId, isRead: false, isArchived: false })
+        ]);
 
         reply.send({
             notifications,
@@ -38,6 +47,9 @@ const getNotifications = async (req, reply) => {
  */
 const getUnreadCount = async (req, reply) => {
     try {
+        if (req.user.notificationEnabled === false) {
+            return reply.send({ unreadCount: 0, disabled: true });
+        }
         const userId = req.user._id;
         const unreadCount = await Notification.countDocuments({ user: userId, isRead: false });
         reply.send({ unreadCount });
@@ -91,6 +103,30 @@ const deleteOldNotifications = async (req, reply) => {
     }
 };
 
+const archiveNotification = async (req, reply) => {
+    try {
+        const notification = await Notification.findOneAndUpdate(
+            { _id: req.params.id, user: req.user._id },
+            { isArchived: true, isRead: true },
+            { new: true },
+        );
+        if (!notification) return reply.code(404).send({ message: 'Không tìm thấy thông báo' });
+        reply.send(notification);
+    } catch (error) {
+        reply.code(400).send({ message: 'Thông báo không hợp lệ' });
+    }
+};
+
+const deleteNotification = async (req, reply) => {
+    try {
+        const result = await Notification.deleteOne({ _id: req.params.id, user: req.user._id });
+        if (!result.deletedCount) return reply.code(404).send({ message: 'Không tìm thấy thông báo' });
+        reply.send({ success: true });
+    } catch (error) {
+        reply.code(400).send({ message: 'Thông báo không hợp lệ' });
+    }
+};
+
 /**
  * Get admin notifications (blocked login attempts, etc.) - Admin only
  */
@@ -107,13 +143,15 @@ const getAdminNotifications = async (req, reply) => {
             query.type = type;
         }
 
-        const notifications = await Notification.find(query)
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
-
-        const total = await Notification.countDocuments(query);
-        const unreadCount = await Notification.countDocuments({ ...query, isRead: false });
+        const [notifications, total, unreadCount] = await Promise.all([
+            Notification.find(query)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Notification.countDocuments(query),
+            Notification.countDocuments({ ...query, isRead: false })
+        ]);
 
         reply.send({
             notifications,
@@ -152,6 +190,8 @@ module.exports = {
     getUnreadCount,
     markAsRead,
     deleteOldNotifications,
+    archiveNotification,
+    deleteNotification,
     getAdminNotifications,
     getAdminUnreadCount
 };

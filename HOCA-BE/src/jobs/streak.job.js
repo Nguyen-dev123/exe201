@@ -1,7 +1,9 @@
 const cron = require('node-cron');
 const User = require('../models/User');
 const Room = require('../models/Room');
+const Transaction = require('../models/Transaction');
 const roomService = require('../services/room.service');
+const paymentService = require('../services/payment.service');
 
 // Store io instance for emitting events
 let ioInstance = null;
@@ -148,7 +150,43 @@ const initJobs = () => {
   // Run every minute - Auto-close expired FREE tier rooms AND send warnings
   cron.schedule('* * * * *', performRoomMaintenance);
 
-  console.log('Cron jobs initialized: streak maintenance (midnight), room auto-close (every minute)');
+  // Run every 2 minutes - Reconcile stale PayOS transactions (webhook fallback)
+  cron.schedule('*/2 * * * *', performPayosReconciliation);
+
+  console.log('Cron jobs initialized: streak maintenance (midnight), room auto-close (every minute), PayOS reconciliation (every 2 min)');
 };
 
-module.exports = { initJobs, setIoInstance, performStreakMaintenance, performRoomMaintenance };
+// Reconcile PENDING PayOS transactions that are older than 2 minutes.
+// This acts as a fallback when the PayOS webhook is delayed or unreachable.
+const performPayosReconciliation = async () => {
+  try {
+    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+    const stale = await Transaction.find({
+      paymentMethod: 'PAYOS',
+      status: 'PENDING',
+      createdAt: { $lt: twoMinutesAgo },
+    }).populate('plan').limit(20);
+
+    if (!stale.length) return { success: true, count: 0 };
+
+    let reconciled = 0;
+    for (const txn of stale) {
+      try {
+        await paymentService.completeTransaction(txn.txnRef, 'PAYOS_RECONCILE');
+        const refreshed = await Transaction.findById(txn._id);
+        if (refreshed?.status === 'COMPLETED') reconciled++;
+      } catch (err) {
+        // Transaction might already be handled or PayOS unreachable — skip
+      }
+    }
+
+    if (reconciled > 0) {
+      console.log(`PayOS reconciliation: ${reconciled} stale transaction(s) completed`);
+    }
+    return { success: true, count: reconciled };
+  } catch (err) {
+    console.error('PayOS reconciliation job error:', err);
+  }
+};
+
+module.exports = { initJobs, setIoInstance, performStreakMaintenance, performRoomMaintenance, performPayosReconciliation };

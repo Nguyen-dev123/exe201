@@ -19,29 +19,59 @@ const paymentRoutes = async (fastify, options) => {
     paymentController.getMyTransactions,
   );
 
-  // Bank QR (manual transfer) flow
+  // PayOS in-app QR flow (render QR inside our own UI)
   fastify.post(
-    "/qr/create",
+    "/payos/create",
     { preHandler: protect },
-    paymentController.createQR,
+    paymentController.createPayosQR,
   );
   fastify.get(
-    "/qr/status/:memo",
+    "/payos/status/:orderCode",
     { preHandler: protect },
-    paymentController.qrStatus,
+    paymentController.payosStatus,
   );
+  fastify.get("/payos/public-status/:orderCode", paymentController.publicPayosStatus);
+  fastify.post("/payos/webhook", paymentController.payosWebhook);
+  fastify.get('/transactions/:transactionId/receipt', { preHandler: protect }, paymentController.downloadReceipt);
+  fastify.post('/transactions/:transactionId/retry', { preHandler: protect }, paymentController.retryTransaction);
+  fastify.post('/transactions/:transactionId/refund', { preHandler: protect }, paymentController.requestRefund);
 
-  // Admin: confirm bank transfers
   fastify.get(
     "/admin/pending",
     { preHandler: [protect, admin] },
-    paymentController.listPending,
+    paymentController.listPendingAdminPayments,
   );
   fastify.post(
-    "/admin/confirm",
+    "/admin/confirm/:txnRef",
     { preHandler: [protect, admin] },
-    paymentController.confirmPayment,
+    paymentController.confirmAdminPayment,
   );
+  fastify.delete(
+    "/admin/pending/:txnRef",
+    { preHandler: [protect, admin] },
+    paymentController.deletePendingAdminPayment,
+  );
+  fastify.post(
+    "/admin/grant-plan",
+    { preHandler: [protect, admin] },
+    paymentController.grantPlanByAdmin,
+  );
+
+  // VNPay online payment gateway
+  fastify.post(
+    "/vnpay/create",
+    { preHandler: protect },
+    paymentController.createVnpay,
+  );
+  // Verify after redirect back (frontend-initiated, needs auth)
+  fastify.post(
+    "/vnpay/verify",
+    { preHandler: protect },
+    paymentController.verifyVnpay,
+  );
+  // IPN webhook: called server-to-server by VNPay -> must be PUBLIC (no auth)
+  fastify.get("/vnpay/ipn", paymentController.vnpayIpn);
+  fastify.post("/vnpay/ipn", paymentController.vnpayIpn);
 };
 
 module.exports = paymentRoutes;
