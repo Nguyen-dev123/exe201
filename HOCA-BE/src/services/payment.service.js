@@ -12,7 +12,11 @@ const {
 // network to break local testing. When the gateway is unreachable we fall
 // back to the DEV success flow (instant activation). In production we never
 // auto-activate — the error is surfaced so no one gets a free subscription.
-const IS_PRODUCTION = NODE_ENV === "production";
+// Render always exposes RENDER=true. Treat it as production even if an older
+// service was created without NODE_ENV, so payment failures can never fall
+// back to instant/free activation on the public deployment.
+const IS_PRODUCTION =
+  NODE_ENV === "production" || process.env.RENDER === "true";
 
 // A connection error means the request never reached PayOS (DNS/firewall/ISP
 // block, timeout, offline). It is safe to fall back in dev for these.
