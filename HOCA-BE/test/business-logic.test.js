@@ -118,6 +118,16 @@ test('register activates account immediately and returns session tokens', () => 
   assert.match(authService, /accountStatus:\s*"ACTIVE"/);
 });
 
+test('login recovers inactive accounts after a correct password', () => {
+  const authService = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'services', 'auth.service.js'),
+    'utf8',
+  );
+  assert.match(authService, /if \(user\.accountStatus === "INACTIVE"\)/);
+  assert.match(authService, /user\.accountStatus = "ACTIVE"/);
+  assert.match(authService, /await user\.save\(\{ validateBeforeSave: false \}\)/);
+});
+
 // ---- Rank / Leaderboard Tests ----
 
 test('rank route is public (no protect middleware)', () => {

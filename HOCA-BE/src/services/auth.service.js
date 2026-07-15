@@ -261,13 +261,6 @@ const loginUser = async ({ email, password }, context = {}) => {
     throw new Error("Invalid credentials");
   }
 
-  // Check if account is verified
-  if (user.accountStatus === "INACTIVE") {
-    throw new Error(
-      "Please verify your email before logging in. Check your inbox for the verification code.",
-    );
-  }
-
   if (user.isLocked || user.isBlocked) {
     // Notify admins about blocked user login attempt
     await notifyAdminBlockedLogin(user);
@@ -278,6 +271,17 @@ const loginUser = async ({ email, password }, context = {}) => {
   const isMatch = await user.matchPassword(password);
   if (!isMatch) {
     throw new Error("Invalid credentials");
+  }
+
+  // Email OTP is disabled. Recover accounts created by the previous OTP flow
+  // once the owner proves their identity with the correct password.
+  if (user.accountStatus === "INACTIVE") {
+    user.accountStatus = "ACTIVE";
+    user.verificationCode = undefined;
+    user.verificationCodeExpires = undefined;
+    user.verificationCodeSentAt = undefined;
+    user.verificationAttempts = 0;
+    await user.save({ validateBeforeSave: false });
   }
 
   if (user.twoFactorEnabled) {
