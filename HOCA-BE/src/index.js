@@ -64,6 +64,7 @@ const startServer = async () => {
             "http://localhost:3001",
             "https://hoca.asia",
             "https://www.hoca.asia",
+            "https://hoca-fe.vercel.app",
             CLIENT_URL,
           ].filter(Boolean);
           const isLanOrigin = NODE_ENV !== "production" &&
