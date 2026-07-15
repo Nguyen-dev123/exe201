@@ -5,17 +5,11 @@ const { Server } = require("socket.io");
 
 const validateProductionConfig = () => {
   if (NODE_ENV !== "production") return;
-  const required = [
-    "MONGODB_URI", "JWT_SECRET", "CLIENT_URL", "CRON_SECRET",
-    "EMAIL_HOST", "EMAIL_PORT", "EMAIL_USER", "EMAIL_PASSWORD",
-    "CLOUDINARY_CLOUD_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_API_SECRET",
-    "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
-  ];
+  // Only fail startup for configuration required by the core API. Optional
+  // integrations are surfaced by /health and can be configured independently;
+  // they must not take the entire website offline.
+  const required = ["MONGODB_URI", "JWT_SECRET", "CLIENT_URL"];
   const missing = required.filter((key) => !process.env[key] || /your-|localhost/i.test(process.env[key]));
-  const payosReady = ["PAYOS_CLIENT_ID", "PAYOS_API_KEY", "PAYOS_CHECKSUM_KEY"].every((key) => process.env[key]);
-  const vnpayReady = ["VNPAY_TMN_CODE", "VNPAY_HASH_SECRET", "VNPAY_URL", "VNPAY_RETURN_URL"].every((key) => process.env[key]);
-  if (!payosReady && !vnpayReady) missing.push("PAYOS_* or VNPAY_*");
-  if ((process.env.CRON_SECRET || "").length < 32) missing.push("CRON_SECRET(min 32 chars)");
   if (!/^https:\/\//.test(process.env.CLIENT_URL || "")) missing.push("CLIENT_URL(https)");
   if (missing.length) throw new Error(`Missing or unsafe production configuration: ${[...new Set(missing)].join(", ")}`);
 };
