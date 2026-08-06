@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Trophy, Flame, Clock, Medal } from "lucide-react";
-import { userApi } from "../lib/services";
+import { publicApi } from "../lib/services";
 import { useAuthStore } from "../store/authStore";
 import { minutesToHours } from "../lib/format";
+import Avatar from "../components/Avatar";
 
 const rankColors = ["text-yellow-400", "text-gray-300", "text-amber-600"];
 
@@ -22,17 +23,7 @@ function Row({ index, user, value, unit, me }) {
           <span className="text-white/40">{index + 1}</span>
         )}
       </div>
-      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-orange-600 flex items-center justify-center text-white font-bold overflow-hidden">
-        {user.avatar ? (
-          <img
-            src={user.avatar}
-            alt=""
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          user.displayName?.[0]?.toUpperCase() || "U"
-        )}
-      </div>
+      <Avatar user={user} size={40} ring={false} className="flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <p className="font-medium text-white truncate">
           {user.displayName}
@@ -51,9 +42,9 @@ export default function LeaderboardPage() {
   const [tab, setTab] = useState("study");
   const { user } = useAuthStore();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["leaderboard"],
-    queryFn: userApi.getLeaderboard,
+    queryFn: publicApi.getLeaderboard,
   });
 
   const list = tab === "study" ? data?.topStudy || [] : data?.topStreak || [];
@@ -97,6 +88,11 @@ export default function LeaderboardPage() {
       <div className="stat-card">
         {isLoading ? (
           <div className="text-center py-12 text-white/50">Đang tải...</div>
+        ) : isError ? (
+          <div className="py-12 text-center text-red-300">
+            <p>Không thể tải bảng xếp hạng.</p>
+            <button type="button" onClick={() => refetch()} className="mt-3 text-sm font-semibold text-primary hover:underline">Thử lại</button>
+          </div>
         ) : list.length === 0 ? (
           <div className="text-center py-12 text-white/40">
             Chưa có dữ liệu xếp hạng

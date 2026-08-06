@@ -69,6 +69,9 @@ const adminRoutes = async (fastify, options) => {
   // Admin Notifications (blocked login attempts, etc.)
   fastify.get('/notifications', notificationController.getAdminNotifications);
   fastify.get('/notifications/unread-count', notificationController.getAdminUnreadCount);
+  fastify.post('/notifications/mark-read', notificationController.markAdminAsRead);
+  fastify.patch('/notifications/:id/archive', notificationController.archiveAdminNotification);
+  fastify.delete('/notifications/:id', notificationController.deleteAdminNotification);
 };
 
 module.exports = adminRoutes;

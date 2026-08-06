@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
-import { Lock } from "lucide-react";
+import { Eye, EyeOff, Lock } from "lucide-react";
 import { authApi } from "../lib/services";
 import { useAuthStore } from "../store/authStore";
 
@@ -11,6 +11,8 @@ export default function ResetPasswordPage() {
   const navigate = useNavigate();
   const { setAuth } = useAuthStore();
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const {
     register,
     handleSubmit,
@@ -26,11 +28,10 @@ export default function ResetPasswordPage() {
       if (res.token && res.user) {
         setAuth(res.user, res.token, res.refreshToken);
         toast.success("Đặt lại mật khẩu thành công!");
-        navigate("/dashboard");
       } else {
-        toast.success("Đặt lại mật khẩu thành công! Hãy đăng nhập.");
-        navigate("/login");
+        toast.success("Đặt lại mật khẩu thành công!");
       }
+      navigate("/", { replace: true });
     } catch (err) {
       toast.error(
         err.response?.data?.message || "Liên kết không hợp lệ hoặc đã hết hạn",
@@ -54,14 +55,15 @@ export default function ResetPasswordPage() {
               size={18}
             />
             <input
-              type="password"
+              type={showPassword ? "text" : "password"}
               placeholder="Mật khẩu mới"
               {...register("password", {
                 required: "Bắt buộc",
                 minLength: { value: 6, message: "Ít nhất 6 ký tự" },
               })}
-              className="app-input pl-10"
+              className="app-input pl-10 pr-12"
             />
+            <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/55 hover:text-white" aria-label={showPassword ? "Ẩn mật khẩu mới" : "Hiện mật khẩu mới"} aria-pressed={showPassword}>{showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button>
           </div>
           {errors.password && (
             <p className="text-red-400 text-xs">{errors.password.message}</p>
@@ -72,13 +74,14 @@ export default function ResetPasswordPage() {
               size={18}
             />
             <input
-              type="password"
+              type={showConfirmPassword ? "text" : "password"}
               placeholder="Xác nhận mật khẩu"
               {...register("confirmPassword", {
                 validate: (v) => v === password || "Mật khẩu không khớp",
               })}
-              className="app-input pl-10"
+              className="app-input pl-10 pr-12"
             />
+            <button type="button" onClick={() => setShowConfirmPassword((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 text-white/55 hover:text-white" aria-label={showConfirmPassword ? "Ẩn mật khẩu xác nhận" : "Hiện mật khẩu xác nhận"} aria-pressed={showConfirmPassword}>{showConfirmPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button>
           </div>
           {errors.confirmPassword && (
             <p className="text-red-400 text-xs">

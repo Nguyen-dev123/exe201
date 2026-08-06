@@ -133,14 +133,24 @@ hoca-fe/
    - Error handling
    - Toast notifications
 
-### 🔄 Đang phát triển
+### ✅ Chức năng mở rộng đã tích hợp
 
-- Google OAuth login
-- Payment integration (VNPay, PayOS)
-- File upload (avatar, documents)
-- AI Study Assistant
-- Notifications
-- Admin dashboard
+- Google OAuth và xác thực hai lớp (2FA)
+- Thanh toán PayOS/VNPay và lịch sử giao dịch
+- Upload avatar, tài liệu thảo luận và tệp hỗ trợ
+- HOCA AI với lịch sử cuộc trò chuyện
+- Thông báo, hỗ trợ người dùng và hồ sơ công khai
+- Quản trị người dùng, phòng học, nội dung, quảng cáo và thanh toán
+
+### 🧪 Kiểm tra chất lượng
+
+```bash
+npm run lint
+npm test
+npm run build
+```
+
+Các luồng camera, microphone, WebRTC, Socket.IO và thanh toán thật cần được kiểm tra thêm trên môi trường staging có HTTPS và cấu hình dịch vụ tương ứng.
 
 ## 🔌 API Integration
 
@@ -246,7 +256,7 @@ npm install
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
 - `npm run preview` - Preview production build
-- `npm run lint` - Run ESLint (nếu có)
+- `npm run lint` - Kiểm tra ESLint
 
 ## 🤝 Contributing
 

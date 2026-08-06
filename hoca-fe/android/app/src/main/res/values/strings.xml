@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">HOCA</string>
+    <string name="title_activity_main">HOCA</string>
+    <string name="package_name">vn.hoca.app</string>
+    <string name="custom_url_scheme">vn.hoca.app</string>
+</resources>

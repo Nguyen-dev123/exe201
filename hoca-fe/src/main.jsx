@@ -4,7 +4,9 @@ import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { Toaster } from "react-hot-toast";
+import "./fonts.css";
 import App from "./App";
+import { GOOGLE_CLIENT_ID } from "./lib/googleOAuth";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -12,22 +14,25 @@ const queryClient = new QueryClient({
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
+      staleTime: 30 * 1000,
+      gcTime: 5 * 60 * 1000,
     },
   },
 });
 
-const GOOGLE_CLIENT_ID =
-  import.meta.env.VITE_GOOGLE_CLIENT_ID || "your-google-client-id";
+const app = (
+  <QueryClientProvider client={queryClient}>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <App />
+      <Toaster position="top-right" />
+    </BrowserRouter>
+  </QueryClientProvider>
+);
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <App />
-          <Toaster position="top-right" />
-        </BrowserRouter>
-      </QueryClientProvider>
-    </GoogleOAuthProvider>
+    {GOOGLE_CLIENT_ID ? (
+      <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>{app}</GoogleOAuthProvider>
+    ) : app}
   </React.StrictMode>,
 );

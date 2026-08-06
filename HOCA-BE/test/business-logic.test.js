@@ -109,23 +109,23 @@ test('login returns requiresTwoFactor when 2FA is enabled', () => {
   assert.match(authController, /challengeToken/);
 });
 
-test('register activates account immediately and returns session tokens', () => {
+test('register requires email verification before issuing session tokens', () => {
   const root = path.join(__dirname, '..', 'src');
   const authController = fs.readFileSync(path.join(root, 'controllers', 'auth.controller.js'), 'utf8');
   const authService = fs.readFileSync(path.join(root, 'services', 'auth.service.js'), 'utf8');
-  assert.match(authController, /requiresVerification:\s*false/);
-  assert.match(authController, /refreshToken/);
-  assert.match(authService, /accountStatus:\s*"ACTIVE"/);
+  assert.match(authController, /requiresVerification:\s*!result\.token/);
+  assert.match(authService, /accountStatus:\s*"INACTIVE"/);
+  assert.match(authService, /verificationCodeExpires/);
 });
 
-test('login recovers inactive accounts after a correct password', () => {
+test('login rejects inactive accounts until OTP verification', () => {
   const authService = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'services', 'auth.service.js'),
     'utf8',
   );
   assert.match(authService, /if \(user\.accountStatus === "INACTIVE"\)/);
-  assert.match(authService, /user\.accountStatus = "ACTIVE"/);
-  assert.match(authService, /await user\.save\(\{ validateBeforeSave: false \}\)/);
+  assert.match(authService, /EMAIL_VERIFICATION_REQUIRED/);
+  assert.match(authService, /Vui lòng xác minh email/);
 });
 
 // ---- Rank / Leaderboard Tests ----
@@ -286,4 +286,46 @@ test('layout handleLogout calls authApi.logout before local logout', () => {
   const layout = fs.readFileSync(path.join(feRoot, 'src', 'components', 'Layout.jsx'), 'utf8');
   assert.match(layout, /authApi\.logout/);
   assert.match(layout, /finally/);
+});
+
+test('admin notification mutations are isolated to admin notification records', () => {
+  const root = path.join(__dirname, '..', 'src');
+  const routes = fs.readFileSync(path.join(root, 'routes', 'admin.routes.js'), 'utf8');
+  const controller = fs.readFileSync(path.join(root, 'controllers', 'notification.controller.js'), 'utf8');
+  assert.match(routes, /notifications\/mark-read/);
+  assert.match(routes, /notifications\/:id\/archive/);
+  assert.match(routes, /delete\('\/notifications\/:id'/);
+  for (const handler of ['markAdminAsRead', 'archiveAdminNotification', 'deleteAdminNotification']) {
+    assert.match(controller, new RegExp(`const ${handler}`));
+  }
+  assert.match(controller, /isAdminNotification:\s*true/);
+});
+
+test('notification reminder uniqueness ignores notifications without a reminder key', () => {
+  const root = path.join(__dirname, '..', 'src');
+  const model = fs.readFileSync(path.join(root, 'models', 'Notification.js'), 'utf8');
+  const migration = fs.readFileSync(path.join(root, 'migrations', 'notification-indexes.js'), 'utf8');
+  assert.match(model, /partialFilterExpression/);
+  assert.match(model, /\$type:\s*'string'/);
+  assert.doesNotMatch(model, /sparse:\s*true/);
+  assert.match(migration, /dropIndex/);
+  assert.match(migration, /createIndexes/);
+});
+
+test('uploads fail clearly when Cloudinary credentials are placeholders', () => {
+  const root = path.join(__dirname, '..', 'src');
+  const service = fs.readFileSync(path.join(root, 'services', 'upload.service.js'), 'utf8');
+  const routes = fs.readFileSync(path.join(root, 'routes', 'upload.routes.js'), 'utf8');
+  assert.match(service, /CLOUDINARY_NOT_CONFIGURED/);
+  assert.match(service, /statusCode\s*=\s*503/);
+  assert.match(routes, /error\.statusCode \|\| 500/);
+});
+
+test('development reset flow keeps a valid token when SMTP is unavailable', () => {
+  const root = path.join(__dirname, '..', 'src');
+  const service = fs.readFileSync(path.join(root, 'services', 'auth.service.js'), 'utf8');
+  const controller = fs.readFileSync(path.join(root, 'controllers', 'auth.controller.js'), 'utf8');
+  assert.match(service, /NODE_ENV === "development"/);
+  assert.match(service, /developmentResetUrl: resetUrl/);
+  assert.match(controller, /developmentResetUrl: result\?\.developmentResetUrl/);
 });

@@ -139,35 +139,6 @@ const registerUser = async (userData, context = {}) => {
   const { displayName, password } = userData;
   const email = userData.email.trim().toLowerCase();
 
-  // Email OTP is intentionally disabled: registration activates the account immediately.
-  const directExisting = await User.findOne({ email }).select("+password");
-  if (directExisting) {
-    const passwordMatches = Boolean(directExisting.password) &&
-      (await directExisting.matchPassword(password));
-    if (directExisting.accountStatus === "INACTIVE" && passwordMatches) {
-      directExisting.accountStatus = "ACTIVE";
-      directExisting.verificationCode = undefined;
-      directExisting.verificationCodeExpires = undefined;
-      directExisting.verificationCodeSentAt = undefined;
-      await directExisting.save({ validateBeforeSave: false });
-      const tokens = await issueSessionTokens(directExisting, context);
-      return { user: toRegistrationUser(directExisting), ...tokens, message: "Registration successful." };
-    }
-    const existingError = new Error("Email này đã được sử dụng. Vui lòng đăng nhập.");
-    existingError.statusCode = 409;
-    existingError.code = "ACCOUNT_EXISTS";
-    throw existingError;
-  }
-
-  const directUser = await User.create({
-    displayName,
-    email,
-    password,
-    accountStatus: "ACTIVE",
-  });
-  const directTokens = await issueSessionTokens(directUser, context);
-  return { user: toRegistrationUser(directUser), ...directTokens, message: "Registration successful." };
-
   // Check if user exists
   const userExists = await User.findOne({ email }).select(
     "+password +verificationCodeSentAt",
@@ -273,15 +244,11 @@ const loginUser = async ({ email, password }, context = {}) => {
     throw new Error("Invalid credentials");
   }
 
-  // Email OTP is disabled. Recover accounts created by the previous OTP flow
-  // once the owner proves their identity with the correct password.
   if (user.accountStatus === "INACTIVE") {
-    user.accountStatus = "ACTIVE";
-    user.verificationCode = undefined;
-    user.verificationCodeExpires = undefined;
-    user.verificationCodeSentAt = undefined;
-    user.verificationAttempts = 0;
-    await user.save({ validateBeforeSave: false });
+    const error = new Error("Vui lòng xác minh email bằng mã OTP trước khi đăng nhập.");
+    error.code = "EMAIL_VERIFICATION_REQUIRED";
+    error.statusCode = 403;
+    throw error;
   }
 
   if (user.twoFactorEnabled) {
@@ -367,6 +334,9 @@ const forgotPassword = async (email) => {
     return true;
   } catch (error) {
     console.error("Reset email error:", error.message);
+    if (NODE_ENV === "development") {
+      return { developmentResetUrl: resetUrl };
+    }
     user.resetPasswordToken = undefined;
     user.resetPasswordExpire = undefined;
     await user.save();

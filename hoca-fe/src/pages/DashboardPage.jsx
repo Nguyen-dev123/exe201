@@ -12,10 +12,14 @@ import {
   Sparkles,
   RotateCcw,
   Plus,
+  CheckCircle2,
+  Pencil,
+  Trash2,
 } from "lucide-react";
-import { userApi, quoteApi } from "../lib/services";
+import { userApi, quoteApi, studyGoalApi } from "../lib/services";
 import { useAuthStore } from "../store/authStore";
 import { formatMinutes, minutesToHours } from "../lib/format";
+import { confirmDialog, promptDialog } from "../lib/dialog";
 
 function StatCard({ icon: Icon, label, value, sub, color }) {
   return (
@@ -47,15 +51,25 @@ export default function DashboardPage() {
     data: dashboard,
     isLoading,
     refetch,
+    isError: dashboardError,
   } = useQuery({
     queryKey: ["dashboard"],
     queryFn: userApi.getDashboard,
   });
 
-  const { data: weekly } = useQuery({
+  const { data: weekly, isLoading: weeklyLoading, isError: weeklyError, refetch: refetchWeekly } = useQuery({
     queryKey: ["weekly-activity"],
     queryFn: userApi.getWeeklyActivity,
   });
+
+  const { data: studyGoals = [], isLoading: goalsLoading, isError: goalsError, refetch: refetchGoals } = useQuery({
+    queryKey: ["study-goals"],
+    queryFn: studyGoalApi.getAll,
+  });
+  const activeStudyGoal = studyGoals.find((item) => item.status === "ACTIVE");
+  const completedStudyGoals = studyGoals.filter(
+    (item) => item.status === "COMPLETED",
+  );
 
   useEffect(() => {
     quoteApi
@@ -72,6 +86,23 @@ export default function DashboardPage() {
     } catch (err) {
       toast.error(err.response?.data?.message || "Không thể khôi phục streak");
     }
+  };
+
+  const editGoal = async (item) => {
+    const text = await promptDialog("Sửa mục tiêu học tập:", item.text, { title: "Chỉnh sửa mục tiêu" });
+    if (!text?.trim()) return;
+    const subject = await promptDialog("Môn học/chủ đề:", item.subject || "", { title: "Phân loại mục tiêu" }) ?? item.subject;
+    const recurrenceInput = await promptDialog("Lặp lại: NONE, DAILY hoặc WEEKLY", item.recurrence || "NONE", { title: "Chu kỳ mục tiêu" });
+    const recurrence = ["NONE", "DAILY", "WEEKLY"].includes(recurrenceInput?.toUpperCase()) ? recurrenceInput.toUpperCase() : item.recurrence;
+    const reminderInput = await promptDialog("Thời gian nhắc:", item.reminderAt ? new Date(item.reminderAt).toISOString().slice(0, 16) : "", { title: "Lịch nhắc mục tiêu", type: "datetime-local" });
+    const notes = await promptDialog("Ghi chú sau phiên học:", item.notes || "", { title: "Ghi chú mục tiêu" }) ?? item.notes;
+    try { await studyGoalApi.update(item._id, { text, subject, recurrence, reminderAt: reminderInput ? new Date(reminderInput).toISOString() : null, notes }); await refetchGoals(); toast.success("Đã cập nhật mục tiêu"); }
+    catch (error) { toast.error(error.response?.data?.message || "Không thể sửa mục tiêu"); }
+  };
+  const deleteGoal = async (item) => {
+    if (!(await confirmDialog("Xóa mục tiêu này?", { destructive: true, confirmText: "Xóa mục tiêu" }))) return;
+    try { await studyGoalApi.remove(item._id); await refetchGoals(); toast.success("Đã xóa mục tiêu"); }
+    catch { toast.error("Không thể xóa mục tiêu"); }
   };
 
   const stats = dashboard?.stats || {};
@@ -111,6 +142,11 @@ export default function DashboardPage() {
 
       {isLoading ? (
         <div className="text-center py-20 text-white/50">Đang tải...</div>
+      ) : dashboardError ? (
+        <div className="rounded-xl border border-red-400/20 bg-red-400/10 px-5 py-10 text-center text-red-200" role="alert">
+          <p>Không thể tải tổng quan học tập.</p>
+          <button type="button" className="btn-secondary mt-4" onClick={() => refetch()}>Thử lại</button>
+        </div>
       ) : (
         <>
           {/* Stat grid */}
@@ -178,7 +214,12 @@ export default function DashboardPage() {
                   <TrendingUp size={18} className="text-primary" />
                   Hoạt động 7 ngày qua
                 </h2>
-                <div className="flex items-end justify-between gap-2 h-44">
+                {weeklyLoading ? <div className="skeleton h-44 w-full rounded-xl" /> : weeklyError ? (
+                  <div className="flex h-44 flex-col items-center justify-center text-sm text-red-200" role="alert">
+                    <p>Không thể tải hoạt động tuần.</p>
+                    <button type="button" className="mt-3 underline" onClick={() => refetchWeekly()}>Thử lại</button>
+                  </div>
+                ) : <div className="flex items-end justify-between gap-2 h-44">
                   {(weekly || []).map((d, i) => (
                     <div
                       key={i}
@@ -210,12 +251,70 @@ export default function DashboardPage() {
                       Chưa có dữ liệu
                     </div>
                   )}
-                </div>
+                </div>}
               </div>
             </div>
 
             {/* Side column */}
             <div className="space-y-6">
+              <div className="stat-card">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="font-semibold flex items-center gap-2">
+                    <CheckCircle2 size={18} className="text-primary" />
+                    Kết quả phiên học
+                  </h2>
+                  <span className="text-sm font-bold text-primary">
+                    {completedStudyGoals.length}
+                  </span>
+                </div>
+
+                {goalsLoading ? <div className="skeleton mt-4 h-24 w-full rounded-xl" /> : goalsError ? (
+                  <div className="mt-4 text-sm text-red-200" role="alert">Không thể tải mục tiêu. <button type="button" className="underline" onClick={() => refetchGoals()}>Thử lại</button></div>
+                ) : activeStudyGoal ? (
+                  <div className="mt-4 rounded-xl border border-primary/20 bg-primary/[0.05] p-3">
+                    <p className="text-xs font-medium text-primary">Đang thực hiện</p>
+                    <p className="mt-1.5 text-sm leading-6 text-white/75">
+                      {activeStudyGoal.text}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-white/45">
+                      {activeStudyGoal.subject && <span className="pill bg-white/5">{activeStudyGoal.subject}</span>}
+                      {activeStudyGoal.recurrence !== "NONE" && <span className="pill bg-white/5">{activeStudyGoal.recurrence === "DAILY" ? "Hằng ngày" : "Hằng tuần"}</span>}
+                      {activeStudyGoal.reminderAt && <span className="pill bg-white/5">Nhắc {new Date(activeStudyGoal.reminderAt).toLocaleString("vi-VN")}</span>}
+                    </div>
+                    {activeStudyGoal.notes && <p className="mt-2 text-xs text-white/45">Ghi chú: {activeStudyGoal.notes}</p>}
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={() => editGoal(activeStudyGoal)} className="text-xs text-white/55 hover:text-primary"><Pencil size={14}/></button>
+                      <button onClick={() => deleteGoal(activeStudyGoal)} className="text-xs text-red-300 hover:text-red-200"><Trash2 size={14}/></button>
+                    </div>
+                    <Link
+                      to={activeStudyGoal.room?._id ? `/rooms/${activeStudyGoal.room._id}` : "/rooms"}
+                      className="mt-3 inline-flex text-xs font-semibold text-primary hover:underline"
+                    >
+                      {activeStudyGoal.room?._id ? "Quay lại phòng" : "Tạo phòng để bắt đầu"}
+                    </Link>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm leading-6 text-white/45">
+                    Chưa có mục tiêu đang thực hiện.
+                  </p>
+                )}
+
+                {completedStudyGoals.length > 0 && (
+                  <div className="mt-4 space-y-3 border-t border-white/10 pt-4">
+                    {completedStudyGoals.slice(0, 3).map((item) => (
+                      <div key={item._id} className="flex items-start gap-2 text-sm">
+                        <CheckCircle2
+                          size={15}
+                          className="mt-1 shrink-0 text-green-400"
+                          aria-hidden="true"
+                        />
+                        <span className="leading-6 text-white/55">{item.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Streak recovery */}
               <div className="stat-card">
                 <h2 className="font-semibold flex items-center gap-2 mb-3">

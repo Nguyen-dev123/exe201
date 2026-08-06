@@ -1,4 +1,6 @@
 import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import toast from "react-hot-toast";
 import {
   Shield,
   CheckCircle,
@@ -9,6 +11,7 @@ import {
   MessageSquareWarning,
   ArrowLeft,
 } from "lucide-react";
+import { reactionApi } from "../lib/services";
 
 const RULES = [
   {
@@ -75,9 +78,7 @@ export default function CommunityPage() {
 
       {/* Header */}
       <div className="text-center mb-10">
-        <div className="w-16 h-16 rounded-2xl bg-primary/15 flex items-center justify-center mx-auto mb-4">
-          <Heart className="text-primary" size={30} />
-        </div>
+        <HeartButton />
         <h1 className="text-3xl md:text-4xl font-bold">
           Quy tắc cộng đồng HOCA
         </h1>
@@ -153,6 +154,143 @@ export default function CommunityPage() {
           Bắt đầu học ngay
         </Link>
       </div>
+    </div>
+  );
+}
+
+/* ---------- Heart reaction button ---------- */
+const LIKED_KEY = "hoca_community_hearted";
+
+function HeartButton() {
+  const burstTimerRef = useRef(null);
+  const [count, setCount] = useState(null);
+  const [liked, setLiked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [burst, setBurst] = useState(false);
+
+  // Load current count + whether this device already liked
+  useEffect(() => {
+    setLiked(localStorage.getItem(LIKED_KEY) === "1");
+    reactionApi
+      .getHearts()
+      .then((d) => setCount(d.count ?? 0))
+      .catch(() => setCount(0));
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (burstTimerRef.current) window.clearTimeout(burstTimerRef.current);
+    },
+    [],
+  );
+
+  const handleClick = async () => {
+    if (busy) return;
+
+    const nextLiked = !liked;
+    if (nextLiked) {
+      setBurst(true);
+      burstTimerRef.current = window.setTimeout(() => setBurst(false), 600);
+    }
+
+    setBusy(true);
+    setCount((current) =>
+      Math.max(0, (current ?? 0) + (nextLiked ? 1 : -1)),
+    );
+    setLiked(nextLiked);
+    if (nextLiked) localStorage.setItem(LIKED_KEY, "1");
+    else localStorage.removeItem(LIKED_KEY);
+
+    try {
+      const data = nextLiked
+        ? await reactionApi.addHeart()
+        : await reactionApi.removeHeart();
+      if (typeof data.count === "number") setCount(data.count);
+      toast.success(
+        nextLiked ? "Đã ghi nhận cam kết của bạn." : "Đã hủy cam kết.",
+      );
+    } catch {
+      setCount((current) =>
+        Math.max(0, (current ?? 0) + (nextLiked ? -1 : 1)),
+      );
+      setLiked(liked);
+      if (liked) localStorage.setItem(LIKED_KEY, "1");
+      else localStorage.removeItem(LIKED_KEY);
+      toast.error("Chưa thể cập nhật cam kết. Vui lòng thử lại.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center mb-4">
+      <button
+        onClick={handleClick}
+        disabled={busy}
+        aria-pressed={liked}
+        aria-label={
+          liked
+            ? "Hủy cam kết cộng đồng HOCA"
+            : "Đồng ý cam kết cộng đồng HOCA"
+        }
+        title={liked ? "Bấm để hủy cam kết" : "Bấm để cùng cam kết"}
+        className={`relative w-16 h-16 cursor-pointer rounded-2xl flex items-center justify-center mx-auto transition-all duration-300 press disabled:cursor-wait disabled:opacity-70 ${
+          liked
+            ? "bg-primary/25 ring-2 ring-primary/50"
+            : "bg-primary/15 hover:bg-primary/25 hover:scale-105"
+        }`}
+      >
+        <Heart
+          size={30}
+          className={`transition-all duration-300 ${
+            liked ? "text-primary scale-110" : "text-primary"
+          } ${burst ? "animate-heartPop" : ""}`}
+          fill={liked ? "currentColor" : "none"}
+        />
+
+        {/* Floating hearts burst */}
+        {burst && (
+          <>
+            <Heart
+              size={16}
+              className="text-primary absolute -top-1 left-3 animate-floatUp"
+              fill="currentColor"
+            />
+            <Heart
+              size={12}
+              className="text-pink-400 absolute -top-1 right-3 animate-floatUp"
+              fill="currentColor"
+              style={{ animationDelay: "0.1s" }}
+            />
+            <Heart
+              size={14}
+              className="text-red-400 absolute top-0 left-1/2 animate-floatUp"
+              fill="currentColor"
+              style={{ animationDelay: "0.05s" }}
+            />
+          </>
+        )}
+      </button>
+
+      {/* Count + label */}
+      <div
+        className="mt-3 flex items-center gap-1.5 text-sm"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        <Heart size={14} className="text-primary" fill="currentColor" />
+        <span className="font-bold text-white">
+          {count === null ? "..." : count.toLocaleString("vi-VN")}
+        </span>
+        <span className="text-white/50">lượt yêu thích</span>
+      </div>
+      <p className="text-white/40 text-xs mt-1">
+        {busy
+          ? "Đang cập nhật..."
+          : liked
+            ? "Đã cùng cam kết. Bấm lại để hủy."
+            : "Bấm vào tim để cùng cam kết với HOCA."}
+      </p>
     </div>
   );
 }

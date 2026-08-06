@@ -9,6 +9,18 @@ const api = axios.create({
   },
 });
 
+let refreshPromise = null;
+
+function redirectToLogin() {
+  useAuthStore.getState().logout();
+  if (typeof window === "undefined") return;
+  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (returnTo && !returnTo.startsWith("/login")) {
+    window.sessionStorage.setItem("hoca-return-to", returnTo);
+  }
+  window.location.assign("/login");
+}
+
 // Request interceptor
 api.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token;
@@ -32,17 +44,19 @@ api.interceptors.response.use(
         const refreshToken = useAuthStore.getState().refreshToken;
 
         if (!refreshToken) {
-          // No refresh token, logout
-          useAuthStore.getState().logout();
-          window.location.href = "/login";
+          redirectToLogin();
           return Promise.reject(error);
         }
 
         // Try to refresh token
-        const response = await axios.post(
-          `${API_BASE}/api/auth/refresh-token`,
-          { refreshToken },
-        );
+        if (!refreshPromise) {
+          refreshPromise = axios
+            .post(`${API_BASE}/api/auth/refresh-token`, { refreshToken })
+            .finally(() => {
+              refreshPromise = null;
+            });
+        }
+        const response = await refreshPromise;
 
         const { token: newToken, refreshToken: newRefreshToken } =
           response.data;
@@ -55,8 +69,7 @@ api.interceptors.response.use(
         return api(originalRequest);
       } catch (refreshError) {
         // Refresh failed, logout
-        useAuthStore.getState().logout();
-        window.location.href = "/login";
+        redirectToLogin();
         return Promise.reject(refreshError);
       }
     }

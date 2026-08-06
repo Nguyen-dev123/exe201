@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import toast from "react-hot-toast";
 import { Mail, ArrowLeft, CheckCircle } from "lucide-react";
 import { authApi } from "../lib/services";
 
 export default function ForgotPasswordPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const {
@@ -17,7 +18,13 @@ export default function ForgotPasswordPage() {
   const onSubmit = async (data) => {
     setLoading(true);
     try {
-      await authApi.forgotPassword(data.email);
+      const result = await authApi.forgotPassword(data.email);
+      if (result.developmentResetUrl) {
+        const target = new URL(result.developmentResetUrl, window.location.origin);
+        toast.success("Mở trang đặt lại mật khẩu trong môi trường local");
+        navigate(`${target.pathname}${target.search}`);
+        return;
+      }
       setSent(true);
       toast.success("Đã gửi email khôi phục!");
     } catch (err) {
@@ -54,12 +61,14 @@ export default function ForgotPasswordPage() {
                 Nhập email và chúng tôi sẽ gửi liên kết để đặt lại mật khẩu.
               </p>
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+                <label htmlFor="forgot-password-email" className="sr-only">Email</label>
                 <div className="relative">
                   <Mail
                     className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40"
                     size={18}
                   />
                   <input
+                    id="forgot-password-email"
                     {...register("email", {
                       required: "Email là bắt buộc",
                       pattern: {
@@ -68,12 +77,15 @@ export default function ForgotPasswordPage() {
                       },
                     })}
                     type="email"
+                    required
+                    aria-invalid={errors.email ? "true" : "false"}
+                    aria-describedby={errors.email ? "forgot-password-email-error" : undefined}
                     placeholder="name@example.com"
                     className="app-input pl-10"
                   />
                 </div>
                 {errors.email && (
-                  <p className="text-red-400 text-xs">{errors.email.message}</p>
+                  <p id="forgot-password-email-error" className="text-red-400 text-xs" role="alert">{errors.email.message}</p>
                 )}
                 <button
                   type="submit"

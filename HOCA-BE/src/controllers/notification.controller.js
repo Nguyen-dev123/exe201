@@ -185,6 +185,51 @@ const getAdminUnreadCount = async (req, reply) => {
     }
 };
 
+const markAdminAsRead = async (req, reply) => {
+    try {
+        const { notificationIds } = req.body || {};
+        const query = { user: req.user._id, isAdminNotification: true, isRead: false };
+        if (notificationIds !== 'all') {
+            if (!Array.isArray(notificationIds) || notificationIds.length === 0) {
+                return reply.code(400).send({ message: 'Danh sách thông báo không hợp lệ' });
+            }
+            query._id = { $in: notificationIds };
+        }
+        const result = await Notification.updateMany(query, { isRead: true });
+        reply.send({ success: true, updated: result.modifiedCount });
+    } catch (error) {
+        reply.code(400).send({ message: 'Thông báo không hợp lệ' });
+    }
+};
+
+const archiveAdminNotification = async (req, reply) => {
+    try {
+        const notification = await Notification.findOneAndUpdate(
+            { _id: req.params.id, user: req.user._id, isAdminNotification: true },
+            { isArchived: true, isRead: true },
+            { new: true },
+        );
+        if (!notification) return reply.code(404).send({ message: 'Không tìm thấy thông báo quản trị' });
+        reply.send(notification);
+    } catch (error) {
+        reply.code(400).send({ message: 'Thông báo không hợp lệ' });
+    }
+};
+
+const deleteAdminNotification = async (req, reply) => {
+    try {
+        const result = await Notification.deleteOne({
+            _id: req.params.id,
+            user: req.user._id,
+            isAdminNotification: true,
+        });
+        if (!result.deletedCount) return reply.code(404).send({ message: 'Không tìm thấy thông báo quản trị' });
+        reply.send({ success: true });
+    } catch (error) {
+        reply.code(400).send({ message: 'Thông báo không hợp lệ' });
+    }
+};
+
 module.exports = {
     getNotifications,
     getUnreadCount,
@@ -193,5 +238,8 @@ module.exports = {
     archiveNotification,
     deleteNotification,
     getAdminNotifications,
-    getAdminUnreadCount
+    getAdminUnreadCount,
+    markAdminAsRead,
+    archiveAdminNotification,
+    deleteAdminNotification,
 };

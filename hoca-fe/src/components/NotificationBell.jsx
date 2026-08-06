@@ -100,15 +100,14 @@ export default function NotificationBell() {
     }
   };
 
-  const openNotification = async (notification) => {
+  const openNotification = (notification) => {
     if (!notification.isRead) {
-      try {
-        await notificationApi.markRead([notification._id]);
-        setItems((current) => current.map((item) => item._id === notification._id ? { ...item, isRead: true } : item));
-        setUnread((current) => Math.max(0, current - 1));
-      } catch {
+      setItems((current) => current.map((item) => item._id === notification._id ? { ...item, isRead: true } : item));
+      setUnread((current) => Math.max(0, current - 1));
+      notificationApi.markRead([notification._id]).catch(() => {
+        loadCount();
         toast.error("Không thể đánh dấu thông báo đã đọc");
-      }
+      });
     }
     setOpen(false);
     if (notification.data?.url) navigate(notification.data.url);

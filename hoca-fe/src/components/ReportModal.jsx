@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { X, Flag } from "lucide-react";
+import { Flag } from "lucide-react";
 import toast from "react-hot-toast";
 import { reportApi } from "../lib/services";
+import CloseButton from "./CloseButton";
 
 const REASONS = [
   { value: "INAPPROPRIATE_CONTENT", label: "Nội dung không phù hợp" },
@@ -38,12 +39,11 @@ export default function ReportModal({ targetUser, roomId, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-dark-card border border-white/10 rounded-2xl p-6 w-full max-w-md text-white animate-scaleIn relative">
-        <button
+        <CloseButton
           onClick={onClose}
-          className="absolute top-4 right-4 text-white/50 hover:text-white"
-        >
-          <X size={20} />
-        </button>
+          label="Đóng cửa sổ báo cáo"
+          className="absolute right-4 top-4"
+        />
         <h2 className="text-xl font-bold mb-1 flex items-center gap-2">
           <Flag size={20} className="text-red-400" /> Báo cáo người dùng
         </h2>

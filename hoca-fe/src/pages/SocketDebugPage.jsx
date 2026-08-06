@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuthStore } from "../store/authStore";
 import { initSocket, getSocket } from "../lib/socket";
 import { Check, X, Users, MessageCircle } from "lucide-react";
+import { alertDialog } from "../lib/dialog";
 
 export default function SocketDebugPage() {
   const { token, user } = useAuthStore();
@@ -112,7 +113,7 @@ export default function SocketDebugPage() {
     socket.once("pong", (data) => {
       const latency = Date.now() - start;
       console.log(`🏓 Pong received! Latency: ${latency}ms`, data);
-      alert(`Pong! Latency: ${latency}ms`);
+      alertDialog(`Pong! Độ trễ: ${latency} ms`, { title: "Kiểm tra kết nối" });
     });
   };
 

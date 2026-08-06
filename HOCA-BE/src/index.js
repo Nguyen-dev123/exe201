@@ -38,6 +38,11 @@ const startServer = async () => {
       } catch (err) {
         console.log("⚠️  Study session index warning:", err.message);
       }
+      try {
+        await require('./migrations/notification-indexes')();
+      } catch (err) {
+        console.log('Notification index migration warning:', err.message);
+      }
     }
 
     // 2. Build Fastify App

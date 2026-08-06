@@ -9,3 +9,5 @@ export function getApiBase() {
 }
 
 export const API_BASE = getApiBase();
+
+export const SOCKET_BASE = import.meta.env.VITE_SOCKET_URL || API_BASE;

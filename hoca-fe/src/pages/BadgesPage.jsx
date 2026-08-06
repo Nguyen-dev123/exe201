@@ -55,7 +55,7 @@ function BadgeCard({ badge }) {
 }
 
 export default function BadgesPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["badges-me"],
     queryFn: badgeApi.getMine,
   });
@@ -85,6 +85,11 @@ export default function BadgesPage() {
 
       {isLoading ? (
         <div className="text-center py-20 text-white/50">Đang tải...</div>
+      ) : isError ? (
+        <div className="rounded-xl border border-red-400/20 bg-red-400/10 px-5 py-10 text-center text-red-200" role="alert">
+          <p>Không thể tải danh sách huy hiệu.</p>
+          <button type="button" className="btn-secondary mt-4" onClick={() => refetch()}>Thử lại</button>
+        </div>
       ) : all.length === 0 ? (
         <div className="text-center py-20 text-white/40">
           Chưa có huy hiệu nào được cấu hình.

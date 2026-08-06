@@ -6,15 +6,29 @@ import { Coffee, Brain } from "lucide-react";
  * Listens to "timer-update" / "timer-sync" socket events which carry:
  *   { status: 'FOCUS' | 'BREAK' | 'IDLE', startTime, duration (minutes), mode, serverTime }
  */
-export default function PomodoroTimer({ socket }) {
+export default function PomodoroTimer({ socket, onFocusComplete }) {
   const [timer, setTimer] = useState(null); // { status, endTime }
   const [remaining, setRemaining] = useState(0);
   const offsetRef = useRef(0); // serverTime - clientNow
+  const previousStatusRef = useRef("IDLE");
+  const onFocusCompleteRef = useRef(onFocusComplete);
+
+  useEffect(() => {
+    onFocusCompleteRef.current = onFocusComplete;
+  }, [onFocusComplete]);
 
   useEffect(() => {
     if (!socket) return;
 
     const apply = (data) => {
+      const nextStatus = data?.status || "IDLE";
+      if (
+        previousStatusRef.current === "FOCUS" &&
+        nextStatus !== "FOCUS"
+      ) {
+        onFocusCompleteRef.current?.();
+      }
+      previousStatusRef.current = nextStatus;
       if (!data || data.status === "IDLE") {
         setTimer({ status: "IDLE" });
         return;

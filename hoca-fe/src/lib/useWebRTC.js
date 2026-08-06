@@ -14,18 +14,24 @@ const ICE_SERVERS = [
   { urls: "stun:stun1.l.google.com:19302" },
 ];
 
-export default function useWebRTC(socket, roomId, enabled) {
+export default function useWebRTC(socket, roomId, enabled, audioOnly = false) {
+  const screenShareSupported = Boolean(navigator.mediaDevices?.getDisplayMedia);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState({}); // socketId -> { stream, userInfo }
   const [camOn, setCamOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [screenStream, setScreenStream] = useState(null);
   const [mediaError, setMediaError] = useState(null);
   const [retryCount, setRetryCount] = useState(0);
 
   const peersRef = useRef({}); // socketId -> RTCPeerConnection
   const localStreamRef = useRef(null);
   const mySocketIdRef = useRef(null);
+  const rawCameraTrackRef = useRef(null);
+  const cameraOutputTrackRef = useRef(null);
+  const screenTrackRef = useRef(null);
+  const sharingRef = useRef(false);
 
   const retryMedia = useCallback(() => {
     setMediaError(null);
@@ -45,7 +51,7 @@ export default function useWebRTC(socket, roomId, enabled) {
     }
 
     navigator.mediaDevices
-      .getUserMedia({ video: true, audio: true })
+      .getUserMedia({ video: !audioOnly, audio: true })
       .then((stream) => {
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
@@ -54,6 +60,8 @@ export default function useWebRTC(socket, roomId, enabled) {
         // Start with cam & mic OFF (tracks disabled) until user enables
         stream.getVideoTracks().forEach((t) => (t.enabled = false));
         stream.getAudioTracks().forEach((t) => (t.enabled = false));
+        rawCameraTrackRef.current = stream.getVideoTracks()[0] || null;
+        cameraOutputTrackRef.current = rawCameraTrackRef.current;
         localStreamRef.current = stream;
         setLocalStream(stream);
         setMediaError(null);
@@ -78,9 +86,10 @@ export default function useWebRTC(socket, roomId, enabled) {
       const s = localStreamRef.current;
       if (s) s.getTracks().forEach((t) => t.stop());
       localStreamRef.current = null;
+      rawCameraTrackRef.current = null;
+      cameraOutputTrackRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, retryCount]);
+  }, [enabled, retryCount, audioOnly]);
 
   // ---- Create a peer connection for a given remote socket ----
   const createPeer = useCallback(
@@ -95,7 +104,15 @@ export default function useWebRTC(socket, roomId, enabled) {
       // Add local tracks
       const stream = localStreamRef.current;
       if (stream) {
-        stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+        const activeVideoTrack = sharingRef.current
+          ? screenTrackRef.current
+          : cameraOutputTrackRef.current;
+        const outboundTracks = [
+          ...stream.getAudioTracks(),
+          ...(activeVideoTrack ? [activeVideoTrack] : []),
+        ];
+        const outboundStream = new MediaStream(outboundTracks);
+        outboundTracks.forEach((track) => pc.addTrack(track, outboundStream));
       }
 
       // Remote track -> show video
@@ -244,6 +261,9 @@ export default function useWebRTC(socket, roomId, enabled) {
     if (!stream) return;
     const next = !camOn;
     stream.getVideoTracks().forEach((t) => (t.enabled = next));
+    if (cameraOutputTrackRef.current) {
+      cameraOutputTrackRef.current.enabled = next;
+    }
     setCamOn(next);
     socket?.emit("media-state-update", {
       roomId,
@@ -252,10 +272,27 @@ export default function useWebRTC(socket, roomId, enabled) {
     });
   }, [camOn, micOn, socket, roomId]);
 
-  const toggleMic = useCallback(() => {
+  const toggleMic = useCallback(async () => {
     const stream = localStreamRef.current;
     if (!stream) return;
     const next = !micOn;
+    if (next && socket) {
+      const permission = await new Promise((resolve) => {
+        const timer = window.setTimeout(
+          () => resolve({ canUseMic: false, reason: "Không thể xác nhận quyền mic." }),
+          5000,
+        );
+        socket.once("mic-permission-result", (result) => {
+          window.clearTimeout(timer);
+          resolve(result);
+        });
+        socket.emit("request-mic-permission", { roomId });
+      });
+      if (!permission.canUseMic) {
+        setMediaError(permission.reason || "Bạn chưa được phép bật mic.");
+        return;
+      }
+    }
     stream.getAudioTracks().forEach((t) => (t.enabled = next));
     setMicOn(next);
     socket?.emit("media-state-update", {
@@ -266,8 +303,6 @@ export default function useWebRTC(socket, roomId, enabled) {
   }, [camOn, micOn, socket, roomId]);
 
   // ---- Screen sharing ----
-  const cameraTrackRef = useRef(null);
-
   const replaceVideoTrack = useCallback((newTrack) => {
     Object.values(peersRef.current).forEach((pc) => {
       const sender = pc
@@ -277,13 +312,32 @@ export default function useWebRTC(socket, roomId, enabled) {
     });
   }, []);
 
+  const setCameraOutputTrack = useCallback(
+    (newTrack) => {
+      const rawTrack =
+        rawCameraTrackRef.current ||
+        localStreamRef.current?.getVideoTracks()[0] ||
+        null;
+      const nextTrack = newTrack || rawTrack;
+      cameraOutputTrackRef.current = nextTrack;
+      if (nextTrack) nextTrack.enabled = camOn;
+      if (!sharingRef.current && nextTrack) replaceVideoTrack(nextTrack);
+    },
+    [camOn, replaceVideoTrack],
+  );
+
   const stopScreenShare = useCallback(() => {
-    const camTrack = cameraTrackRef.current;
-    if (camTrack) {
-      replaceVideoTrack(camTrack);
-      camTrack.enabled = camOn;
+    const cameraOutputTrack = cameraOutputTrackRef.current;
+    if (cameraOutputTrack) {
+      replaceVideoTrack(cameraOutputTrack);
+      cameraOutputTrack.enabled = camOn;
     }
-    cameraTrackRef.current = null;
+    if (screenTrackRef.current?.readyState === "live") {
+      screenTrackRef.current.stop();
+    }
+    screenTrackRef.current = null;
+    sharingRef.current = false;
+    setScreenStream(null);
     setSharing(false);
   }, [camOn, replaceVideoTrack]);
 
@@ -292,20 +346,25 @@ export default function useWebRTC(socket, roomId, enabled) {
       stopScreenShare();
       return;
     }
+    if (!screenShareSupported) {
+      setMediaError("Thiết bị này không hỗ trợ chia sẻ màn hình. Bạn vẫn có thể dùng camera và microphone.");
+      return;
+    }
     try {
       const display = await navigator.mediaDevices.getDisplayMedia({
         video: true,
       });
       const screenTrack = display.getVideoTracks()[0];
-      const stream = localStreamRef.current;
-      cameraTrackRef.current = stream?.getVideoTracks()[0] || null;
+      screenTrackRef.current = screenTrack;
+      setScreenStream(display);
       replaceVideoTrack(screenTrack);
+      sharingRef.current = true;
       setSharing(true);
       screenTrack.onended = () => stopScreenShare();
     } catch (e) {
       console.error("screen share error", e);
     }
-  }, [sharing, replaceVideoTrack, stopScreenShare]);
+  }, [sharing, replaceVideoTrack, stopScreenShare, screenShareSupported]);
 
   return {
     localStream,
@@ -313,10 +372,13 @@ export default function useWebRTC(socket, roomId, enabled) {
     camOn,
     micOn,
     sharing,
+    screenStream,
+    screenShareSupported,
     mediaError,
     toggleCam,
     toggleMic,
     toggleScreenShare,
+    setCameraOutputTrack,
     retryMedia,
   };
 }

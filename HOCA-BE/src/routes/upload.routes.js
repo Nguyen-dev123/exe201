@@ -51,7 +51,7 @@ const uploadRoutes = async (app) => {
             };
         } catch (error) {
             request.log.error(error);
-            return reply.status(500).send({ error: 'Failed to upload avatar' });
+            return reply.status(error.statusCode || 500).send({ error: error.code === 'CLOUDINARY_NOT_CONFIGURED' ? 'Dịch vụ tải tệp chưa được cấu hình.' : 'Failed to upload avatar' });
         }
     });
 
@@ -88,7 +88,7 @@ const uploadRoutes = async (app) => {
             };
         } catch (error) {
             request.log.error(error);
-            return reply.status(500).send({ error: 'Failed to upload image' });
+            return reply.status(error.statusCode || 500).send({ error: error.code === 'CLOUDINARY_NOT_CONFIGURED' ? 'Dịch vụ tải tệp chưa được cấu hình.' : 'Failed to upload image' });
         }
     });
 
@@ -132,7 +132,7 @@ const uploadRoutes = async (app) => {
             if (error?.code === 'FST_REQ_FILE_TOO_LARGE') {
                 return reply.status(400).send({ message: 'Tệp tải lên vượt quá giới hạn cho phép.' });
             }
-            return reply.status(500).send({ message: 'Không thể tải media lên. Vui lòng thử lại.' });
+            return reply.status(error.statusCode || 500).send({ message: error.code === 'CLOUDINARY_NOT_CONFIGURED' ? 'Dịch vụ tải tệp chưa được cấu hình.' : 'Không thể tải media lên. Vui lòng thử lại.' });
         }
     });
 
@@ -164,7 +164,7 @@ const uploadRoutes = async (app) => {
             return { success: true, url: result.url, publicId: result.publicId, name: data.filename };
         } catch (error) {
             request.log.error(error);
-            return reply.status(500).send({ error: 'Không thể tải tài liệu lên.' });
+            return reply.status(error.statusCode || 500).send({ error: error.code === 'CLOUDINARY_NOT_CONFIGURED' ? 'Dịch vụ tải tệp chưa được cấu hình.' : 'Không thể tải tài liệu lên.' });
         }
     });
 
@@ -179,7 +179,7 @@ const uploadRoutes = async (app) => {
             return { success: true, url: result.url, type: imageTypes.includes(data.mimetype) ? 'image' : 'video', name: data.filename };
         } catch (error) {
             request.log.error(error);
-            return reply.status(error?.code === 'FST_REQ_FILE_TOO_LARGE' ? 400 : 500).send({ error: error?.code === 'FST_REQ_FILE_TOO_LARGE' ? 'Tệp vượt quá 25 MB.' : 'Không thể tải tệp hỗ trợ lên.' });
+            return reply.status(error?.code === 'FST_REQ_FILE_TOO_LARGE' ? 400 : error.statusCode || 500).send({ error: error?.code === 'FST_REQ_FILE_TOO_LARGE' ? 'Tệp vượt quá 25 MB.' : error.code === 'CLOUDINARY_NOT_CONFIGURED' ? 'Dịch vụ tải tệp chưa được cấu hình.' : 'Không thể tải tệp hỗ trợ lên.' });
         }
     });
 };

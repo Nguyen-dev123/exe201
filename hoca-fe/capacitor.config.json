@@ -1,0 +1,9 @@
+{
+  "appId": "vn.hoca.app",
+  "appName": "HOCA",
+  "webDir": "dist",
+  "server": {
+    "hostname": "hoca.asia",
+    "androidScheme": "https"
+  }
+}

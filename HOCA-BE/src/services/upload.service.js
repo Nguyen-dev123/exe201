@@ -1,5 +1,18 @@
 const cloudinary = require('../config/cloudinary');
 
+const isCloudinaryConfigured = () => {
+    const values = [process.env.CLOUDINARY_CLOUD_NAME, process.env.CLOUDINARY_API_KEY, process.env.CLOUDINARY_API_SECRET];
+    return values.every((value) => value && !/your-|placeholder|change-me|xxx/i.test(value));
+};
+
+const assertCloudinaryConfigured = () => {
+    if (isCloudinaryConfigured()) return;
+    const error = new Error('Cloudinary chưa được cấu hình');
+    error.code = 'CLOUDINARY_NOT_CONFIGURED';
+    error.statusCode = 503;
+    throw error;
+};
+
 /**
  * Upload an image buffer to Cloudinary
  * @param {Buffer} fileBuffer - The file buffer to upload
@@ -10,6 +23,7 @@ const cloudinary = require('../config/cloudinary');
  * @returns {Promise<{url: string, publicId: string}>}
  */
 const uploadImage = async (fileBuffer, options = {}) => {
+    assertCloudinaryConfigured();
     const { folder = 'uploads', publicId, transformation } = options;
 
     return new Promise((resolve, reject) => {
@@ -54,6 +68,7 @@ const uploadImage = async (fileBuffer, options = {}) => {
 };
 
 const uploadDocument = async (fileBuffer, options = {}) => {
+    assertCloudinaryConfigured();
     const { folder = 'discussion-documents', filename } = options;
     return new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
@@ -72,6 +87,7 @@ const uploadDocument = async (fileBuffer, options = {}) => {
 };
 
 const uploadMedia = async (fileBuffer, options = {}) => {
+    assertCloudinaryConfigured();
     const { folder = 'ad-media', resourceType = 'image' } = options;
     return new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
@@ -111,5 +127,6 @@ module.exports = {
     uploadImage,
     uploadMedia,
     uploadDocument,
-    deleteImage
+  deleteImage,
+  isCloudinaryConfigured,
 };

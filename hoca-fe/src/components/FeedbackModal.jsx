@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Star, X } from "lucide-react";
+import { Star } from "lucide-react";
 import toast from "react-hot-toast";
-import { feedbackApi } from "../lib/services";
+import { roomApi } from "../lib/services";
+import CloseButton from "./CloseButton";
 
 export default function FeedbackModal({ roomId, onClose, onDone }) {
   const [rating, setRating] = useState(0);
@@ -22,7 +23,7 @@ export default function FeedbackModal({ roomId, onClose, onDone }) {
     }
     setLoading(true);
     try {
-      await feedbackApi.create({ rating, comment, roomId });
+      await roomApi.rate(roomId, rating, comment.trim());
       toast.success("Cảm ơn đánh giá của bạn!");
       finish();
     } catch (err) {
@@ -34,12 +35,11 @@ export default function FeedbackModal({ roomId, onClose, onDone }) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-dark-card border border-white/10 rounded-2xl p-6 w-full max-w-md text-white animate-scaleIn relative">
-        <button
+        <CloseButton
           onClick={finish}
-          className="absolute top-4 right-4 text-white/50 hover:text-white"
-        >
-          <X size={20} />
-        </button>
+          label="Đóng cửa sổ đánh giá"
+          className="absolute right-4 top-4"
+        />
         <h2 className="text-xl font-bold mb-1 text-center">
           Đánh giá buổi học
         </h2>

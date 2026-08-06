@@ -22,7 +22,8 @@ const register = async (req, reply) => {
       user: result.user,
       token: result.token,
       refreshToken: result.refreshToken,
-      requiresVerification: false,
+      requiresVerification: !result.token,
+      developmentCode: result.developmentCode,
     });
   } catch (error) {
     reply.code(error.statusCode || 400).send({
@@ -123,9 +124,9 @@ const forgotPassword = async (req, reply) => {
       return reply.code(400).send({ message: "Email is required" });
     }
 
-    await authService.forgotPassword(email);
+    const result = await authService.forgotPassword(email);
 
-    reply.send({ message: "Email sent" });
+    reply.send({ message: "Email sent", developmentResetUrl: result?.developmentResetUrl });
   } catch (error) {
     reply.code(error.statusCode || 400).send({ message: error.message, code: error.code });
   }

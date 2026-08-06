@@ -4,16 +4,15 @@ import { Check, Crown } from "lucide-react";
 import { pricingApi } from "../lib/services";
 import { useAuthStore } from "../store/authStore";
 import { formatVND } from "../lib/format";
-
-const FREE_FEATURES = [
-  "Tham gia phòng học công khai",
-  "Học tối đa 3 giờ/ngày",
-  "Hệ thống Streak & Badges cơ bản",
-  "Bảng xếp hạng cộng đồng",
-  "AI Assistant không giới hạn",
-];
+import {
+  FREE_PLAN_CONTENT,
+  getPlanContent,
+} from "../lib/pricingContent";
 
 const POPULAR_TIER = "YEARLY";
+
+// Thứ tự hiển thị các gói: Tháng -> Năm -> Vĩnh viễn
+const TIER_ORDER = { MONTHLY: 1, YEARLY: 2, LIFETIME: 3 };
 
 export default function PricingCards() {
   const { user } = useAuthStore();
@@ -24,20 +23,22 @@ export default function PricingCards() {
     queryFn: pricingApi.getPlans,
   });
 
-  const activePlans = (plans || []).filter((p) => p.isActive !== false);
+  const activePlans = (plans || [])
+    .filter((p) => p.isActive !== false)
+    .sort((a, b) => (TIER_ORDER[a.tier] ?? 99) - (TIER_ORDER[b.tier] ?? 99));
   const currentTier = user?.subscriptionTier || "FREE";
 
   return (
-    <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 items-start">
+    <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
       {/* Free plan */}
-      <div className="bg-dark-card border border-white/10 rounded-2xl p-6">
-        <h3 className="text-xl font-bold mb-1">Miễn phí</h3>
-        <p className="text-white/50 text-sm mb-4">Bắt đầu hành trình</p>
+      <div className="bg-dark-card border border-white/10 rounded-2xl p-6 flex flex-col">
+        <h3 className="text-xl font-bold mb-1">{FREE_PLAN_CONTENT.name}</h3>
+        <p className="text-white/50 text-sm mb-4 h-10">{FREE_PLAN_CONTENT.description}</p>
         <div className="mb-6">
           <span className="text-4xl font-bold">0đ</span>
         </div>
-        <ul className="space-y-3 mb-6">
-          {FREE_FEATURES.map((f) => (
+        <ul className="space-y-3 mb-6 flex-grow">
+          {FREE_PLAN_CONTENT.features.map((f) => (
             <li key={f} className="flex items-start gap-2 text-sm">
               <Check
                 size={16}
@@ -49,7 +50,7 @@ export default function PricingCards() {
         </ul>
         <button
           onClick={() => navigate(user ? "/rooms" : "/register")}
-          className="w-full py-2.5 text-center rounded-lg border border-white/15 hover:bg-white/5 transition text-sm"
+          className="w-full py-2.5 text-center rounded-lg border border-white/15 hover:bg-white/5 transition text-sm mt-auto"
         >
           {currentTier === "FREE"
             ? "Gói hiện tại"
@@ -70,12 +71,13 @@ export default function PricingCards() {
         </div>
       ) : (
         activePlans.map((plan) => {
+          const content = getPlanContent(plan.tier);
           const popular = plan.tier === POPULAR_TIER;
           const isCurrent = currentTier === plan.tier;
           return (
             <div
               key={plan._id}
-              className={`relative rounded-2xl p-6 ${
+              className={`relative rounded-2xl p-6 flex flex-col ${
                 popular
                   ? "bg-gradient-to-br from-orange-900/30 to-yellow-900/20 border-2 border-primary"
                   : "bg-dark-card border border-white/10"
@@ -90,10 +92,10 @@ export default function PricingCards() {
               )}
               <h3 className="text-xl font-bold mb-1 flex items-center gap-2">
                 <Crown size={18} className="text-primary" />
-                {plan.name}
+                {content?.name || plan.name}
               </h3>
-              <p className="text-white/50 text-sm mb-4 line-clamp-2">
-                {plan.description}
+              <p className="text-white/50 text-sm mb-4 h-10 line-clamp-2">
+                {content?.description || plan.description}
               </p>
               <div className="mb-6">
                 <span className="text-3xl font-bold gradient-text">
@@ -106,8 +108,8 @@ export default function PricingCards() {
                   </span>
                 )}
               </div>
-              <ul className="space-y-2.5 mb-6">
-                {(plan.features || []).map((f, i) => (
+              <ul className="space-y-2.5 mb-6 flex-grow">
+                {(content?.features || plan.features || []).map((f, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
                     <Check
                       size={16}
@@ -120,7 +122,7 @@ export default function PricingCards() {
               <button
                 disabled={isCurrent}
                 onClick={() => navigate("/pricing")}
-                className={`w-full py-2.5 rounded-lg font-semibold transition flex items-center justify-center gap-2 ${
+                className={`w-full py-2.5 rounded-lg font-semibold transition flex items-center justify-center gap-2 mt-auto ${
                   isCurrent
                     ? "bg-white/10 text-white/40 cursor-not-allowed"
                     : "bg-primary hover:bg-primary-dark text-white"

@@ -1,0 +1,11 @@
+{
+  "description": "HOCA - Nền tảng học tập trực tuyến hàng đầu Việt Nam",
+  "repo": "https://github.com/Nguyen-dev123/exe201",
+  "owner": {
+    "username": "Nguyen-dev123",
+    "email": "THAY_EMAIL_CUA_BAN@gmail.com"
+  },
+  "record": {
+    "CNAME": "cname.vercel-dns.com"
+  }
+}

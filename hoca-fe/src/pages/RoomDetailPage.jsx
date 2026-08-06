@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useEffect, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import api from "../lib/api";
 import { initSocket, getSocket } from "../lib/socket";
-import { chatApi } from "../lib/services";
+import { chatApi, studyGoalApi } from "../lib/services";
 import { useAuthStore } from "../store/authStore";
 import {
   Send,
@@ -17,12 +17,22 @@ import {
   Crown,
   Flag,
   Smile,
+  UserX,
+  Target,
+  CheckCircle2,
 } from "lucide-react";
 import PomodoroTimer from "../components/PomodoroTimer";
-import VideoRoom from "../components/VideoRoom";
 import ReportModal from "../components/ReportModal";
 import FeedbackModal from "../components/FeedbackModal";
+import { confirmDialog } from "../lib/dialog";
 import StickerPicker from "../components/StickerPicker";
+import Avatar from "../components/Avatar";
+const VideoRoom = lazy(() => import("../components/VideoRoom"));
+const SmartDiscussionRoom = lazy(() => import("../components/SmartDiscussionRoom"));
+
+function RoomFeatureLoader() {
+  return <div className="skeleton mb-6 h-72 w-full rounded-2xl" aria-label="Đang tải tính năng phòng học" />;
+}
 
 export default function RoomDetailPage() {
   const { id } = useParams();
@@ -33,24 +43,69 @@ export default function RoomDetailPage() {
   const [newMessage, setNewMessage] = useState("");
   const [leaving, setLeaving] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState([]);
+  const [connectionState, setConnectionState] = useState(
+    typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "connecting",
+  );
   const [canChat, setCanChat] = useState(false);
   const [sessionInfo, setSessionInfo] = useState(null); // FREE tier remaining time
   const [reportTarget, setReportTarget] = useState(null);
   const [showFeedback, setShowFeedback] = useState(false);
   const [showStickers, setShowStickers] = useState(false);
   const [aiThinking, setAiThinking] = useState(false);
+  const [roomPassword, setRoomPassword] = useState("");
+  const [joinPassword, setJoinPassword] = useState(null);
+  const [joining, setJoining] = useState(false);
+  const [joinedRoom, setJoinedRoom] = useState(false);
+  const [joinError, setJoinError] = useState("");
+  const [joinBlockedMessage, setJoinBlockedMessage] = useState("");
+  const [joinAttempt, setJoinAttempt] = useState(0);
+  const [completingGoal, setCompletingGoal] = useState(false);
+  const [showGoalPrompt, setShowGoalPrompt] = useState(false);
+  const messagesContainerRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const passwordInputRef = useRef(null);
+  const joinedRef = useRef(false);
+  const inactiveRoomHandledRef = useRef(false);
+  const missingRoomHandledRef = useRef(false);
 
-  const { data: room, isLoading } = useQuery({
+  const { data: room, isLoading, isError: roomLoadFailed, error: roomLoadError, refetch: refetchRoom } = useQuery({
     queryKey: ["room", id],
     queryFn: async () => {
       const response = await api.get(`/api/rooms/${id}`);
       return response.data;
     },
+    retry: (failureCount, error) =>
+      error?.response?.status !== 404 && failureCount < 2,
   });
 
   const isPremium = user?.subscriptionTier && user.subscriptionTier !== "FREE";
   const isAdmin = user?.role === "ADMIN";
+  const isOwnerOrAdmin =
+    room?.owner?._id === user?._id || room?.owner === user?._id || isAdmin;
+  const needsPassword =
+    (!!room?.hasPassword || !!joinError) && !isOwnerOrAdmin && !joinedRoom;
+
+  useEffect(() => {
+    if (!room || room.isActive !== false || inactiveRoomHandledRef.current) return;
+    inactiveRoomHandledRef.current = true;
+    toast.error("Phòng này đã đóng, bạn không thể vào nữa.");
+    navigate("/rooms", { replace: true });
+  }, [room, navigate]);
+
+  useEffect(() => {
+    if (roomLoadError?.response?.status !== 404 || missingRoomHandledRef.current) return;
+    missingRoomHandledRef.current = true;
+    toast.error("Phòng này đã bị xóa hoặc không còn tồn tại.");
+    navigate("/rooms", { replace: true });
+  }, [roomLoadError, navigate]);
+
+  useEffect(() => {
+    if (!needsPassword) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      passwordInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [needsPassword]);
 
   useEffect(() => {
     // ✅ CHANGED: Allow ALL users to chat (FREE + PREMIUM + ADMIN)
@@ -58,10 +113,29 @@ export default function RoomDetailPage() {
   }, []);
 
   useEffect(() => {
-    if (!token) return;
+    setMessages([]);
+    setOnlineUsers([]);
+    setSessionInfo(null);
+    setRoomPassword("");
+    setJoinPassword(null);
+    setJoining(false);
+    setJoinedRoom(false);
+    setJoinError("");
+    setJoinBlockedMessage("");
+    joinedRef.current = false;
+    inactiveRoomHandledRef.current = false;
+    missingRoomHandledRef.current = false;
+  }, [id]);
 
-    // Load chat history first (so reload keeps messages)
-    chatApi
+  useEffect(() => {
+    if (!token) return;
+    if (!room) return;
+    if (room.isActive === false) return;
+    if (room.hasPassword && !isOwnerOrAdmin && !joinPassword) return;
+
+    // Load chat history immediately only for rooms that do not need a password gate.
+    if (!room.hasPassword || isOwnerOrAdmin) {
+      chatApi
       .getMessages(id, 50)
       .then((history) => {
         const mapped = (history || []).map((m) => ({
@@ -79,24 +153,40 @@ export default function RoomDetailPage() {
       .catch(() => {
         /* room may have no history yet */
       });
+    }
 
     const socket = initSocket(token);
+    const joinPayload = { roomId: id };
+    if (joinPassword) {
+      joinPayload.password = joinPassword;
+    }
 
-    // Wait for socket to be connected before joining room
+    // Rejoin on every connection, including automatic reconnects after a
+    // temporary network loss. Socket.IO server room membership is not kept
+    // across transport disconnects.
     const joinRoom = () => {
-      if (socket.connected) {
-        console.log("🔄 Joining room:", id);
-        socket.emit("join-room", { roomId: id });
-      } else {
-        console.log("⏳ Waiting for socket connection...");
-        socket.once("connect", () => {
-          console.log("🔄 Socket connected, now joining room:", id);
-          socket.emit("join-room", { roomId: id });
-        });
-      }
+      setJoining(true);
+      socket.emit("join-room", joinPayload);
     };
 
-    joinRoom();
+    const onSocketConnect = () => {
+      setConnectionState("connected");
+      joinRoom();
+    };
+    const onSocketDisconnect = () => {
+      setConnectionState(navigator.onLine ? "reconnecting" : "offline");
+      setJoining(true);
+    };
+    const onBrowserOnline = () => {
+      setConnectionState("reconnecting");
+      if (!socket.connected) socket.connect();
+    };
+    const onBrowserOffline = () => setConnectionState("offline");
+
+    socket.on("connect", onSocketConnect);
+    socket.on("disconnect", onSocketDisconnect);
+    window.addEventListener("online", onBrowserOnline);
+    window.addEventListener("offline", onBrowserOffline);
 
     const onChat = (message) => {
       setMessages((prev) => [...prev, message]);
@@ -109,7 +199,14 @@ export default function RoomDetailPage() {
       if (data.userName) toast(`${data.userName} đã rời phòng`);
       setOnlineUsers((prev) => prev.filter((u) => u.userId !== data.userId));
     };
-    const onUsers = (users) => setOnlineUsers(users);
+    const onUsers = (users) => {
+      joinedRef.current = true;
+      setJoinedRoom(true);
+      setJoining(false);
+      setJoinError("");
+      setJoinBlockedMessage("");
+      setOnlineUsers(users);
+    };
     const onClosed = (data) => {
       toast.error(data.message || "Phòng đã bị đóng");
       setTimeout(() => navigate("/rooms"), 1500);
@@ -131,8 +228,41 @@ export default function RoomDetailPage() {
       setTimeout(() => navigate("/pricing"), 2000);
     };
     const onChatError = (e) => toast.error(e.message);
-    const onError = (e) => toast.error(e.message || "Có lỗi xảy ra");
+    const onJoinError = (e) => {
+      const message = e.message || "Co loi xay ra";
+      setJoining(false);
+      if (!joinedRef.current) {
+        const normalized = message.toLowerCase();
+        if (
+          normalized.includes("mật khẩu") ||
+          normalized.includes("mat khau") ||
+          normalized.includes("password")
+        ) {
+          setJoinPassword(null);
+          setRoomPassword("");
+          setJoinError(message);
+          return;
+        }
+        setJoinBlockedMessage(message);
+      }
+      toast.error(message);
+    };
     const onAiThinking = (d) => setAiThinking(!!d.isThinking);
+    const onChatWarning = (w) =>
+      toast(w.message, { icon: "⚠️", duration: 6000 });
+    const onKicked = (data) => {
+      toast.error(data.message || "Bạn đã bị mời ra khỏi phòng", {
+        duration: 5000,
+      });
+      setTimeout(() => navigate("/rooms"), 1500);
+    };
+    const onRoomSwitched = (data) => {
+      joinedRef.current = false;
+      toast(data.message || "Tài khoản của bạn đã chuyển sang phòng khác.", {
+        icon: "↪️",
+      });
+      navigate("/rooms");
+    };
 
     socket.on("chat-message", onChat);
     socket.on("user-joined", onJoined);
@@ -145,11 +275,20 @@ export default function RoomDetailPage() {
     socket.on("session-warning", onSessionWarning);
     socket.on("session-expired", onSessionExpired);
     socket.on("chat-error", onChatError);
-    socket.on("error", onError);
+    socket.on("chat-warning", onChatWarning);
+    socket.on("kicked", onKicked);
+    socket.on("room-switched", onRoomSwitched);
+    socket.on("error", onJoinError);
     socket.on("ai-thinking", onAiThinking);
 
+    // Closed or deleted rooms can reject immediately, so all response
+    // listeners must exist before the join request is sent.
+    if (socket.connected) onSocketConnect();
+
     return () => {
-      socket.emit("leave-room", { roomId: id });
+      if (joinedRef.current) {
+        socket.emit("leave-room", { roomId: id });
+      }
       socket.off("chat-message", onChat);
       socket.off("user-joined", onJoined);
       socket.off("user-left", onLeft);
@@ -161,13 +300,44 @@ export default function RoomDetailPage() {
       socket.off("session-warning", onSessionWarning);
       socket.off("session-expired", onSessionExpired);
       socket.off("chat-error", onChatError);
-      socket.off("error", onError);
+      socket.off("chat-warning", onChatWarning);
+      socket.off("kicked", onKicked);
+      socket.off("room-switched", onRoomSwitched);
+      socket.off("error", onJoinError);
       socket.off("ai-thinking", onAiThinking);
+      socket.off("connect", onSocketConnect);
+      socket.off("disconnect", onSocketDisconnect);
+      window.removeEventListener("online", onBrowserOnline);
+      window.removeEventListener("offline", onBrowserOffline);
     };
-  }, [id, token, navigate]);
+  }, [id, token, room, isOwnerOrAdmin, joinPassword, joinAttempt, navigate]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!token || !joinedRoom || !room?.hasPassword || isOwnerOrAdmin) return;
+
+    chatApi
+      .getMessages(id, 50)
+      .then((history) => {
+        const mapped = (history || []).map((m) => ({
+          _id: m._id,
+          userId: m.sender?._id || m.sender,
+          displayName: m.sender?.displayName || "User",
+          avatar: m.sender?.avatar,
+          message: m.content,
+          content: m.content,
+          type: m.type,
+          timestamp: m.createdAt,
+        }));
+        setMessages(mapped);
+      })
+      .catch(() => {
+        /* room may have no history yet */
+      });
+  }, [id, token, joinedRoom, room?.hasPassword, isOwnerOrAdmin]);
+
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    container?.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
   }, [messages, aiThinking]);
 
   const handleSendMessage = (e) => {
@@ -204,7 +374,6 @@ export default function RoomDetailPage() {
     // Emit leave-room and cleanup listeners immediately
     const socket = getSocket();
     if (socket) {
-      console.log("🚪 Leaving room:", id);
       socket.emit("leave-room", { roomId: id });
 
       // Remove all room-specific listeners to prevent receiving stale updates
@@ -224,12 +393,9 @@ export default function RoomDetailPage() {
     }
 
     try {
-      console.log("📡 Calling leave API...");
       await api.post(`/api/rooms/${id}/leave`);
-      console.log("✅ Leave API success");
 
       // ✅ Invalidate and refetch room queries immediately
-      console.log("🔄 Invalidating queries...");
       await queryClient.invalidateQueries({ queryKey: ["rooms"] });
       await queryClient.invalidateQueries({ queryKey: ["my-rooms"] });
       await queryClient.invalidateQueries({ queryKey: ["room", id] });
@@ -238,18 +404,15 @@ export default function RoomDetailPage() {
       await queryClient.refetchQueries({ queryKey: ["rooms"] });
       await queryClient.refetchQueries({ queryKey: ["my-rooms"] });
 
-      console.log("✅ Queries invalidated and refetched");
-    } catch (err) {
-      console.error("❌ Leave error:", err);
+    } catch {
       /* ignore - still navigate away */
     } finally {
-      console.log("🔀 Navigating to /rooms");
       navigate("/rooms");
     }
   };
 
   const handleCloseRoom = async () => {
-    if (!confirm("Đóng phòng này? Tất cả người dùng sẽ bị đá ra.")) return;
+    if (!(await confirmDialog("Đóng phòng này? Tất cả người dùng sẽ được đưa ra khỏi phòng.", { destructive: true, confirmText: "Đóng phòng" }))) return;
 
     // Cleanup listeners before closing
     const socket = getSocket();
@@ -283,13 +446,184 @@ export default function RoomDetailPage() {
     }
   };
 
-  const isOwnerOrAdmin =
-    room?.owner?._id === user?._id || room?.owner === user?._id || isAdmin;
+  const handleKick = async (member) => {
+    const name = member.userName || member.displayName || "thành viên này";
+    if (!(await confirmDialog(`Mời ${name} ra khỏi phòng học?`, { destructive: true, confirmText: "Đưa ra khỏi phòng" }))) return;
+    const socket = getSocket();
+    if (socket) {
+      socket.emit("kick-user", {
+        roomId: id,
+        targetUserId: member.userId || member._id,
+      });
+      toast.success(`Đã mời ${name} ra khỏi phòng`);
+    }
+  };
+
+  const handleCompleteGoal = async () => {
+    if (!room?.studyGoal?._id || completingGoal) return;
+    setCompletingGoal(true);
+    try {
+      await studyGoalApi.complete(room.studyGoal._id);
+      setShowGoalPrompt(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["room", id] }),
+        queryClient.invalidateQueries({ queryKey: ["study-goal", "active"] }),
+        queryClient.invalidateQueries({ queryKey: ["study-goals"] }),
+      ]);
+      toast.success("Tuyệt vời! Mục tiêu đã được đánh dấu hoàn thành.");
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Không thể hoàn thành mục tiêu.");
+    } finally {
+      setCompletingGoal(false);
+    }
+  };
+
+  const handlePasswordSubmit = (e) => {
+    e.preventDefault();
+    const password = roomPassword.trim();
+    if (!password) {
+      setJoinError("Vui lòng nhập mật khẩu phòng.");
+      return;
+    }
+    setJoinError("");
+    setJoinBlockedMessage("");
+    setJoinPassword(password);
+  };
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[70vh]">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      </div>
+    );
+  }
+
+  if (roomLoadFailed) {
+    return (
+      <div className="max-w-xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-white">
+        <div className="stat-card space-y-4">
+          <h1 className="text-2xl font-bold">Không thể tải phòng</h1>
+          <p className="text-white/60">Phòng không còn tồn tại hoặc kết nối đang gặp sự cố.</p>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <button type="button" onClick={() => refetchRoom()} className="btn-primary flex-1">
+              Thử lại
+            </button>
+            <button type="button" onClick={() => navigate("/rooms")} className="btn-secondary flex-1">
+              Quay lại phòng học
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (needsPassword) {
+    return (
+      <div className="max-w-xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-white">
+        <form onSubmit={handlePasswordSubmit} className="stat-card space-y-5">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-primary/15 text-primary flex items-center justify-center flex-shrink-0">
+              <Lock size={24} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">{room?.name}</h1>
+              <p className="text-white/50 mt-1">
+                Phòng này yêu cầu mật khẩu để tham gia.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-white/70 mb-2">
+              Mật khẩu phòng
+            </label>
+            <input
+              ref={passwordInputRef}
+              type="password"
+              value={roomPassword}
+              onChange={(e) => {
+                setRoomPassword(e.target.value);
+                if (joinError) setJoinError("");
+              }}
+              placeholder="Nhập mật khẩu phòng"
+              className="app-input"
+              disabled={joining}
+            />
+            {joinError && (
+              <p className="text-sm text-red-400 mt-2">{joinError}</p>
+            )}
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              type="submit"
+              disabled={joining}
+              className="btn-primary flex-1 disabled:opacity-60"
+            >
+              {joining ? "Đang vào phòng..." : "Vào phòng"}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/rooms")}
+              className="btn-secondary flex-1"
+            >
+              Quay lại
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
+  if (joinBlockedMessage && !joinedRoom) {
+    const upgradeRequired = /nâng cấp|gói hoca|giới hạn.*(gói|free)/i.test(
+      joinBlockedMessage,
+    );
+
+    return (
+      <div className="max-w-xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-white">
+        <div className="stat-card space-y-4">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 rounded-xl bg-red-500/15 text-red-400 flex items-center justify-center flex-shrink-0">
+              <XCircle size={24} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Không thể vào phòng</h1>
+              <p className="text-white/60 mt-1">{joinBlockedMessage}</p>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button onClick={() => navigate("/rooms")} className="btn-secondary flex-1">
+              Quay lại phòng học
+            </button>
+            {upgradeRequired && (
+              <Link to="/pricing" className="btn-primary flex-1 text-center">
+                Xem gói nâng cấp
+              </Link>
+            )}
+            {!upgradeRequired && (
+              <button
+                type="button"
+                onClick={() => {
+                  setJoinBlockedMessage("");
+                  setJoinAttempt((current) => current + 1);
+                }}
+                className="btn-primary flex-1"
+              >
+                Thử vào lại
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!joinedRoom) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[70vh] text-white/70 gap-4">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+        <p>Đang vào phòng...</p>
       </div>
     );
   }
@@ -317,9 +651,23 @@ export default function RoomDetailPage() {
               <span className="flex items-center gap-1.5 text-white/60">
                 <Users size={16} /> {onlineUsers.length} online
               </span>
-              <span className="flex items-center gap-1.5 text-green-400">
-                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                Đang hoạt động
+              <span
+                className={`flex items-center gap-1.5 ${
+                  connectionState === "connected" ? "text-green-400" : "text-amber-300"
+                }`}
+                role="status"
+                aria-live="polite"
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    connectionState === "connected" ? "bg-green-400" : "bg-amber-300"
+                  }`}
+                />
+                {connectionState === "connected"
+                  ? "Đã kết nối"
+                  : connectionState === "offline"
+                    ? "Mất kết nối mạng"
+                    : "Đang kết nối lại..."}
               </span>
               {sessionInfo && !isPremium && (
                 <span className="flex items-center gap-1.5 text-orange-400">
@@ -349,16 +697,72 @@ export default function RoomDetailPage() {
         </div>
       </div>
 
+      {room?.studyGoal && (
+        <section className="mb-6 flex flex-col gap-4 rounded-2xl border border-primary/25 bg-primary/[0.055] p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              {room.studyGoal.status === "COMPLETED" ? (
+                <CheckCircle2 size={20} aria-hidden="true" />
+              ) : (
+                <Target size={20} aria-hidden="true" />
+              )}
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-primary">
+                {room.studyGoal.status === "COMPLETED"
+                  ? "Mục tiêu đã hoàn thành"
+                  : showGoalPrompt
+                    ? "Phiên tập trung đã kết thúc"
+                    : "Mục tiêu phiên học"}
+              </p>
+              <p className="mt-1 text-sm font-semibold leading-6 text-white/85 sm:text-base">
+                {room.studyGoal.text}
+              </p>
+            </div>
+          </div>
+
+          {String(room.studyGoal.user) === String(user?._id) &&
+            room.studyGoal.status === "ACTIVE" && (
+              <button
+                type="button"
+                onClick={handleCompleteGoal}
+                disabled={completingGoal}
+                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-primary px-4 text-sm font-semibold text-[#18100A] transition hover:bg-primary-light active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <CheckCircle2 size={17} aria-hidden="true" />
+                {completingGoal ? "Đang lưu..." : "Đã hoàn thành"}
+              </button>
+            )}
+        </section>
+      )}
+
       {/* Video grid for VIDEO rooms */}
       {room?.roomType === "VIDEO" && (
-        <div className="mb-6">
-          <VideoRoom
-            socket={getSocket()}
+        <Suspense fallback={<RoomFeatureLoader />}>
+          <div className="mb-6">
+            <VideoRoom socket={getSocket()} roomId={id} user={user} onlineUsers={onlineUsers} />
+          </div>
+        </Suspense>
+      )}
+
+      {room?.roomType === "DISCUSSION" && (
+        <Suspense fallback={<RoomFeatureLoader />}>
+          <SmartDiscussionRoom
             roomId={id}
             user={user}
             onlineUsers={onlineUsers}
+            socket={getSocket()}
           />
-        </div>
+          <div className="mb-6">
+            <VideoRoom
+              socket={getSocket()}
+              roomId={id}
+              user={user}
+              onlineUsers={onlineUsers}
+              audioOnly
+            />
+          </div>
+        </Suspense>
       )}
 
       <div className="grid lg:grid-cols-4 gap-6">
@@ -372,7 +776,10 @@ export default function RoomDetailPage() {
               </h3>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div
+              ref={messagesContainerRef}
+              className="flex-1 overflow-y-auto p-4 space-y-3"
+            >
               {messages.length === 0 ? (
                 <div className="text-center text-white/30 mt-24">
                   <MessageCircle className="mx-auto h-14 w-14 mb-3 opacity-30" />
@@ -401,19 +808,19 @@ export default function RoomDetailPage() {
                       <div
                         className={`flex ${isMine ? "flex-row-reverse" : ""} items-end gap-2 max-w-[75%]`}
                       >
-                        {!isMine && (
-                          <div
-                            className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0 ${
-                              isBot
-                                ? "bg-gradient-to-br from-primary to-orange-600"
-                                : "bg-dark-lighter"
-                            }`}
-                          >
-                            {isBot
-                              ? "AI"
-                              : msg.displayName?.[0]?.toUpperCase() || "U"}
-                          </div>
-                        )}
+                        {!isMine &&
+                          (isBot ? (
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-semibold flex-shrink-0 bg-gradient-to-br from-primary to-orange-600 ring-2 ring-white/15">
+                              AI
+                            </div>
+                          ) : (
+                            <Avatar
+                              src={msg.avatar}
+                              name={msg.displayName}
+                              size={32}
+                              className="flex-shrink-0"
+                            />
+                          ))}
                         <div className={isMine ? "items-end" : ""}>
                           {!isMine && (
                             <p className="text-xs font-medium text-white/60 mb-1">
@@ -427,19 +834,38 @@ export default function RoomDetailPage() {
                             <img
                               src={msg.message || msg.content}
                               alt="sticker"
+                              loading="lazy"
+                              decoding="async"
                               className="w-28 h-28 object-contain"
                             />
                           ) : (
-                            <div
-                              className={`px-4 py-2 rounded-2xl ${
-                                isMine
-                                  ? "bg-primary text-white rounded-br-sm"
-                                  : "bg-dark-lighter text-white/90 rounded-bl-sm"
-                              }`}
-                            >
-                              <p className="break-words whitespace-pre-wrap">
-                                {msg.message || msg.content}
-                              </p>
+                            <div className="group/msg flex items-center gap-1.5">
+                              <div
+                                className={`px-4 py-2 rounded-2xl ${
+                                  isMine
+                                    ? "bg-primary text-white rounded-br-sm"
+                                    : "bg-dark-lighter text-white/90 rounded-bl-sm"
+                                }`}
+                              >
+                                <p className="break-words whitespace-pre-wrap">
+                                  {msg.message || msg.content}
+                                </p>
+                              </div>
+                              {/* Nút báo cáo trên tin nhắn của người khác */}
+                              {!isMine && !isBot && (
+                                <button
+                                  onClick={() =>
+                                    setReportTarget({
+                                      userId: msg.userId,
+                                      userName: msg.displayName,
+                                    })
+                                  }
+                                  className="opacity-0 group-hover/msg:opacity-100 p-1 rounded-md text-white/30 hover:text-red-400 hover:bg-red-500/10 transition flex-shrink-0"
+                                  title="Báo cáo tin nhắn này"
+                                >
+                                  <Flag size={13} />
+                                </button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -517,7 +943,17 @@ export default function RoomDetailPage() {
           {/* Pomodoro */}
           <div className="stat-card">
             <h3 className="font-semibold mb-2 text-center">⏱ Pomodoro</h3>
-            <PomodoroTimer socket={getSocket()} />
+            <PomodoroTimer
+              socket={getSocket()}
+              onFocusComplete={() => {
+                if (
+                  room?.studyGoal?.status === "ACTIVE" &&
+                  String(room.studyGoal.user) === String(user?._id)
+                ) {
+                  setShowGoalPrompt(true);
+                }
+              }}
+            />
           </div>
 
           {/* Members */}
@@ -540,9 +976,11 @@ export default function RoomDetailPage() {
                     className="flex items-center gap-3 p-2 rounded-lg hover:bg-dark-lighter transition group"
                   >
                     <div className="relative">
-                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-orange-600 flex items-center justify-center text-white text-sm font-semibold">
-                        {member.userName?.[0]?.toUpperCase() || "U"}
-                      </div>
+                      <Avatar
+                        src={member.avatar}
+                        name={member.userName}
+                        size={36}
+                      />
                       <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-dark-card rounded-full" />
                     </div>
                     <span className="text-sm truncate flex-1">
@@ -552,13 +990,24 @@ export default function RoomDetailPage() {
                       )}
                     </span>
                     {member.userId !== user?._id && (
-                      <button
-                        onClick={() => setReportTarget(member)}
-                        className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 transition"
-                        title="Báo cáo"
-                      >
-                        <Flag size={14} />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {isOwnerOrAdmin && (
+                          <button
+                            onClick={() => handleKick(member)}
+                            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-white/40 hover:text-orange-400 hover:bg-orange-500/10 transition"
+                            title="Mời ra khỏi phòng"
+                          >
+                            <UserX size={14} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setReportTarget(member)}
+                          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-white/40 hover:text-red-400 hover:bg-red-500/10 transition"
+                          title="Báo cáo"
+                        >
+                          <Flag size={14} />
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))
