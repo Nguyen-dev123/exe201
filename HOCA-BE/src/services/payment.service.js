@@ -70,7 +70,8 @@ if (PAYOS_CONFIGURED) {
 const createUniqueOrderCode = async () => {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const orderCode = crypto.randomInt(100000000, 999999999);
-    if (!(await Transaction.exists({ txnRef: String(orderCode) }))) return orderCode;
+    if (!(await Transaction.exists({ txnRef: String(orderCode) })))
+      return orderCode;
   }
   throw new Error("Could not allocate a unique payment reference");
 };
@@ -83,16 +84,35 @@ const assertCanPurchase = async (userId, plan) => {
     error.code = "ACTIVE_PLAN_DUPLICATE";
     throw error;
   }
-  const pending = await Transaction.exists({
+
+  // Instead of blocking, automatically cancel old pending transactions for this plan.
+  // This allows users to retry payment without getting stuck.
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+  await Transaction.updateMany(
+    {
+      user: userId,
+      plan: plan._id,
+      type: "PREMIUM_SUBSCRIPTION",
+      status: "PENDING",
+      createdAt: { $lt: fiveMinutesAgo }, // older than 5 minutes
+    },
+    { $set: { status: "CANCELLED" } },
+  );
+
+  // Only block if there's a very recent pending transaction (within last 2 minutes)
+  // to prevent accidental double-clicks
+  const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+  const recentPending = await Transaction.exists({
     user: userId,
     plan: plan._id,
     type: "PREMIUM_SUBSCRIPTION",
     status: "PENDING",
-    createdAt: { $gte: new Date(Date.now() - 30 * 60 * 1000) },
+    createdAt: { $gte: twoMinutesAgo },
   });
-  if (pending) {
-    const error = new Error("Bạn đã có một giao dịch cho gói này đang chờ xử lý.");
-    error.code = "PAYMENT_ALREADY_PENDING";
+
+  if (recentPending) {
+    const error = new Error("Vui lòng đợi 2 phút trước khi thử lại.");
+    error.code = "PAYMENT_TOO_SOON";
     throw error;
   }
 };
@@ -421,12 +441,15 @@ const getUserTransactions = async (userId, page = 1, limit = 10) => {
 };
 
 const getUserTransaction = async (userId, transactionId) => {
-  const transaction = await Transaction.findOne({ _id: transactionId, user: userId })
-    .populate('plan', 'name price currency tier durationDays features')
-    .populate('user', 'displayName email')
+  const transaction = await Transaction.findOne({
+    _id: transactionId,
+    user: userId,
+  })
+    .populate("plan", "name price currency tier durationDays features")
+    .populate("user", "displayName email")
     .lean();
   if (!transaction) {
-    const error = new Error('Không tìm thấy giao dịch');
+    const error = new Error("Không tìm thấy giao dịch");
     error.statusCode = 404;
     throw error;
   }
@@ -437,52 +460,54 @@ const retryUserTransaction = async (userId, transactionId, ipAddr) => {
   const transaction = await Transaction.findOne({
     _id: transactionId,
     user: userId,
-    status: 'FAILED',
-    type: 'PREMIUM_SUBSCRIPTION',
+    status: "FAILED",
+    type: "PREMIUM_SUBSCRIPTION",
   });
   if (!transaction?.plan) {
-    const error = new Error('Giao dịch này không thể thanh toán lại');
+    const error = new Error("Giao dịch này không thể thanh toán lại");
     error.statusCode = 400;
     throw error;
   }
 
-  if (transaction.paymentMethod === 'VNPAY') {
+  if (transaction.paymentMethod === "VNPAY") {
     const result = await createVnpayUrl(userId, transaction.plan, ipAddr);
-    return { provider: 'VNPAY', ...result };
+    return { provider: "VNPAY", ...result };
   }
   const result = await createPayosOrder(userId, transaction.plan);
-  return { provider: 'PAYOS', ...result };
+  return { provider: "PAYOS", ...result };
 };
 
 const requestRefund = async (userId, transactionId, reason) => {
   const transaction = await Transaction.findOne({
     _id: transactionId,
     user: userId,
-    status: 'COMPLETED',
+    status: "COMPLETED",
   });
   if (!transaction) {
-    const error = new Error('Chỉ giao dịch thành công mới có thể yêu cầu hoàn tiền');
+    const error = new Error(
+      "Chỉ giao dịch thành công mới có thể yêu cầu hoàn tiền",
+    );
     error.statusCode = 400;
     throw error;
   }
-  if (transaction.refundStatus && transaction.refundStatus !== 'NONE') {
-    const error = new Error('Giao dịch này đã có yêu cầu hoàn tiền');
+  if (transaction.refundStatus && transaction.refundStatus !== "NONE") {
+    const error = new Error("Giao dịch này đã có yêu cầu hoàn tiền");
     error.statusCode = 409;
     throw error;
   }
   const completedAt = transaction.completedAt || transaction.createdAt;
   if (Date.now() - new Date(completedAt).getTime() > 7 * 24 * 60 * 60 * 1000) {
-    const error = new Error('Thời hạn yêu cầu hoàn tiền là 7 ngày');
+    const error = new Error("Thời hạn yêu cầu hoàn tiền là 7 ngày");
     error.statusCode = 400;
     throw error;
   }
-  const cleanReason = String(reason || '').trim();
+  const cleanReason = String(reason || "").trim();
   if (cleanReason.length < 10) {
-    const error = new Error('Vui lòng mô tả lý do ít nhất 10 ký tự');
+    const error = new Error("Vui lòng mô tả lý do ít nhất 10 ký tự");
     error.statusCode = 400;
     throw error;
   }
-  transaction.refundStatus = 'REQUESTED';
+  transaction.refundStatus = "REQUESTED";
   transaction.refundReason = cleanReason.slice(0, 1000);
   transaction.refundRequestedAt = new Date();
   await transaction.save();
@@ -538,9 +563,12 @@ const getPublicPaymentStatus = async (orderCode) => {
   // If still pending, try to complete it now (idempotent — completeTransaction checks status first).
   if (transaction.status === "PENDING") {
     try {
-      await completeTransaction(txnRef, 'PAYOS_PUBLIC_STATUS');
+      await completeTransaction(txnRef, "PAYOS_PUBLIC_STATUS");
     } catch (e) {
-      console.warn(`getPublicPaymentStatus: completeTransaction failed for ${txnRef}:`, e.message);
+      console.warn(
+        `getPublicPaymentStatus: completeTransaction failed for ${txnRef}:`,
+        e.message,
+      );
     }
     const refreshed = await Transaction.findById(transaction._id).select(
       "status completedAt",
@@ -567,18 +595,28 @@ const handlePayosWebhook = async (payload) => {
 
   if (data.code === "00") {
     // Webhook already verified the signature, skip provider double-check
-    const completed = await completeTransaction(txnRef, data.reference || "PAYOS_WEBHOOK", {
-      skipProviderVerify: true,
-    });
+    const completed = await completeTransaction(
+      txnRef,
+      data.reference || "PAYOS_WEBHOOK",
+      {
+        skipProviderVerify: true,
+      },
+    );
     if (!completed) {
-      console.warn(`PayOS webhook: transaction ${txnRef} not found or already completed`);
+      console.warn(
+        `PayOS webhook: transaction ${txnRef} not found or already completed`,
+      );
       // PayOS sends a signed test payload while registering the webhook.
       // A valid but unknown order must still be acknowledged.
     } else {
-      console.log(`PayOS webhook: transaction ${txnRef} completed successfully`);
+      console.log(
+        `PayOS webhook: transaction ${txnRef} completed successfully`,
+      );
     }
   } else {
-    console.warn(`PayOS webhook: non-success code for ${txnRef}: ${data.code} — ${data.desc || ''}`);
+    console.warn(
+      `PayOS webhook: non-success code for ${txnRef}: ${data.code} — ${data.desc || ""}`,
+    );
   }
 
   return { orderCode: data.orderCode, code: data.code };
