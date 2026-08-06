@@ -17,7 +17,7 @@ export const PAID_PLAN_CONTENT = {
     name: "HOCA+ Tháng",
     description: "Trọn bộ công cụ học nhóm trong 30 ngày",
     eyebrow: "Linh hoạt",
-    price: 79000,
+    price: 50000,
     durationDays: 30,
     features: [
       "Toàn bộ quyền lợi gói Free",
@@ -34,7 +34,7 @@ export const PAID_PLAN_CONTENT = {
     name: "HOCA+ Năm",
     description: "Học lâu dài, tiết kiệm 37% và không giới hạn phòng",
     eyebrow: "Đáng chọn nhất",
-    price: 599000,
+    price: 500000,
     durationDays: 365,
     features: [
       "Toàn bộ quyền lợi của HOCA+ Tháng",
@@ -49,7 +49,7 @@ export const PAID_PLAN_CONTENT = {
     name: "HOCA+ Vĩnh viễn",
     description: "Thanh toán một lần, sử dụng HOCA+ trọn đời",
     eyebrow: "Trọn đời",
-    price: 1499000,
+    price: 999000,
     durationDays: -1,
     features: [
       "Toàn bộ quyền lợi của HOCA+ Năm",
