@@ -6,10 +6,7 @@ import { pricingApi } from "../lib/services";
 import { useAuthStore } from "../store/authStore";
 import { formatVND, getTierInfo } from "../lib/format";
 import QRPaymentModal from "../components/QRPaymentModal";
-import {
-  FREE_PLAN_CONTENT,
-  getPlanContent,
-} from "../lib/pricingContent";
+import { FREE_PLAN_CONTENT, getPlanContent } from "../lib/pricingContent";
 
 const POPULAR_TIER = "YEARLY";
 
@@ -17,10 +14,34 @@ const POPULAR_TIER = "YEARLY";
 const TIER_ORDER = { MONTHLY: 1, YEARLY: 2, LIFETIME: 3 };
 
 const PLAN_THEMES = {
-  FREE: { icon: Zap, gradient: "from-gray-500 to-gray-600", accent: "text-gray-400", bg: "bg-gray-500/10", border: "border-gray-500/30" },
-  MONTHLY: { icon: Shield, gradient: "from-blue-500 to-cyan-500", accent: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/30" },
-  YEARLY: { icon: Crown, gradient: "from-primary to-orange-500", accent: "text-primary", bg: "bg-primary/10", border: "border-primary/50" },
-  LIFETIME: { icon: Infinity, gradient: "from-amber-500 to-yellow-500", accent: "text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/30" },
+  FREE: {
+    icon: Zap,
+    gradient: "from-gray-500 to-gray-600",
+    accent: "text-gray-400",
+    bg: "bg-gray-500/10",
+    border: "border-gray-500/30",
+  },
+  MONTHLY: {
+    icon: Shield,
+    gradient: "from-blue-500 to-cyan-500",
+    accent: "text-blue-400",
+    bg: "bg-blue-500/10",
+    border: "border-blue-500/30",
+  },
+  YEARLY: {
+    icon: Crown,
+    gradient: "from-primary to-orange-500",
+    accent: "text-primary",
+    bg: "bg-primary/10",
+    border: "border-primary/50",
+  },
+  LIFETIME: {
+    icon: Infinity,
+    gradient: "from-amber-500 to-yellow-500",
+    accent: "text-amber-400",
+    bg: "bg-amber-500/10",
+    border: "border-amber-500/30",
+  },
 };
 
 export default function PricingPage() {
@@ -43,7 +64,8 @@ export default function PricingPage() {
       return;
     }
     const content = getPlanContent(plan.tier);
-    setQrPlan(content ? { ...plan, ...content } : plan);
+    // Merge content but preserve price from API (database source of truth)
+    setQrPlan(content ? { ...plan, ...content, price: plan.price } : plan);
   };
 
   const currentTier = user?.subscriptionTier || "FREE";
@@ -67,8 +89,8 @@ export default function PricingPage() {
             phù hợp với bạn
           </h1>
           <p className="text-white/60 text-lg max-w-2xl mx-auto">
-            Bắt đầu miễn phí, nâng cấp khi cần. Mở khóa Smart Discussion,
-            AI Thư ký, nền ảo và không giới hạn thời gian học.
+            Bắt đầu miễn phí, nâng cấp khi cần. Mở khóa Smart Discussion, AI Thư
+            ký, nền ảo và không giới hạn thời gian học.
           </p>
           {user && (
             <p className="mt-3 text-sm text-white/50">
@@ -83,7 +105,9 @@ export default function PricingPage() {
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
           {/* ────── FREE PLAN ────── */}
           <div className="bg-dark-card border border-white/10 rounded-2xl p-6 flex flex-col hover:border-white/20 transition-colors">
-            <div className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium mb-4 ${PLAN_THEMES.FREE.bg} ${PLAN_THEMES.FREE.accent}`}>
+            <div
+              className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium mb-4 ${PLAN_THEMES.FREE.bg} ${PLAN_THEMES.FREE.accent}`}
+            >
               <Zap size={12} /> Miễn phí
             </div>
             <h3 className="text-xl font-bold mb-1">{FREE_PLAN_CONTENT.name}</h3>
@@ -127,7 +151,10 @@ export default function PricingPage() {
               const popular = plan.tier === POPULAR_TIER;
               const isCurrent = currentTier === plan.tier;
               const Icon = theme.icon;
-              const monthlyEquiv = calculateMonthly(plan.price, plan.durationDays);
+              const monthlyEquiv = calculateMonthly(
+                plan.price,
+                plan.durationDays,
+              );
 
               return (
                 <div
@@ -147,25 +174,34 @@ export default function PricingPage() {
                   )}
 
                   {/* Badge */}
-                  <div className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium mb-4 ${theme.bg} ${theme.accent}`}>
+                  <div
+                    className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-medium mb-4 ${theme.bg} ${theme.accent}`}
+                  >
                     <Icon size={12} /> {content?.eyebrow || plan.tier}
                   </div>
 
-                  <h3 className="text-xl font-bold mb-1">{content?.name || plan.name}</h3>
+                  <h3 className="text-xl font-bold mb-1">
+                    {content?.name || plan.name}
+                  </h3>
                   <p className="text-white/50 text-sm mb-4 h-10 line-clamp-2">
                     {content?.description || plan.description}
                   </p>
 
                   {/* Price */}
                   <div className="mb-1">
-                    <span className={`text-4xl font-bold bg-gradient-to-r ${theme.gradient} bg-clip-text text-transparent`}>
+                    <span
+                      className={`text-4xl font-bold bg-gradient-to-r ${theme.gradient} bg-clip-text text-transparent`}
+                    >
                       {formatVND(plan.price)}
                     </span>
                   </div>
                   {plan.durationDays > 0 ? (
                     <div className="mb-6">
                       <span className="text-white/40 text-sm">
-                        / {plan.durationDays === 365 ? "năm" : `${plan.durationDays} ngày`}
+                        /{" "}
+                        {plan.durationDays === 365
+                          ? "năm"
+                          : `${plan.durationDays} ngày`}
                       </span>
                       {monthlyEquiv && (
                         <span className="ml-2 text-xs text-white/30">
@@ -236,15 +272,16 @@ export default function PricingPage() {
               <Shield size={14} className="text-green-500" /> Bảo mật thanh toán
             </span>
             <span className="flex items-center gap-1.5">
-              <Check size={14} className="text-green-500" /> Kích hoạt ngay lập tức
+              <Check size={14} className="text-green-500" /> Kích hoạt ngay lập
+              tức
             </span>
             <span className="flex items-center gap-1.5">
               <Zap size={14} className="text-green-500" /> Hủy bất kỳ lúc nào
             </span>
           </div>
           <p className="text-white/30 text-sm">
-            Thanh toán bằng cách quét mã QR và chuyển khoản ngân hàng.
-            Gói được kích hoạt sau khi xác nhận thanh toán.
+            Thanh toán bằng cách quét mã QR và chuyển khoản ngân hàng. Gói được
+            kích hoạt sau khi xác nhận thanh toán.
           </p>
         </div>
       </div>
