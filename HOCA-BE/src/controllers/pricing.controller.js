@@ -60,14 +60,37 @@ const deletePlan = async (req, reply) => {
   }
 };
 
-// Quick update pricing for Yearly and Lifetime plans
+// Quick update pricing for all plans
 const quickUpdatePrices = async (req, reply) => {
   try {
-    // Update Yearly plan to 599,000 VND
+    // Update Monthly plan to 50,000 VND
+    const monthlyUpdate = await PricingPlan.findOneAndUpdate(
+      { tier: "MONTHLY" },
+      {
+        price: 50000,
+        name: "HOCA+ Tháng",
+        description: "Trọn bộ công cụ học nhóm trong 30 ngày",
+        durationDays: 30,
+        isActive: true,
+        features: [
+          "Toàn bộ quyền lợi gói Free",
+          "Học không giới hạn thời gian, không quảng cáo",
+          "Tạo phòng không giới hạn mỗi ngày, không giới hạn thời lượng",
+          "Tạo HOCA Smart Discussion & dùng mic thảo luận",
+          "Giơ tay, điều phối phát biểu & đồng chủ phòng",
+          "Bảng cộng tác, tài liệu, nhiệm vụ & quiz trực tiếp",
+          "AI Thư ký, tổng kết & flashcard",
+          "Nền ảo có sẵn, tải nền riêng & mật khẩu bảo vệ phòng",
+        ],
+      },
+      { new: true },
+    );
+
+    // Update Yearly plan to 500,000 VND
     const yearlyUpdate = await PricingPlan.findOneAndUpdate(
       { tier: "YEARLY" },
       {
-        price: 599000,
+        price: 500000,
         name: "HOCA+ Năm",
         description: "Học lâu dài, tiết kiệm 37% và không giới hạn phòng",
         durationDays: 365,
@@ -85,11 +108,11 @@ const quickUpdatePrices = async (req, reply) => {
       { new: true },
     );
 
-    // Update Lifetime plan to 1,499,000 VND
+    // Update Lifetime plan to 999,000 VND
     const lifetimeUpdate = await PricingPlan.findOneAndUpdate(
       { tier: "LIFETIME" },
       {
-        price: 1499000,
+        price: 999000,
         name: "HOCA+ Vĩnh viễn",
         description: "Thanh toán một lần, sử dụng HOCA+ trọn đời",
         durationDays: -1,
@@ -112,12 +135,13 @@ const quickUpdatePrices = async (req, reply) => {
 
     await logAdminAction(req, "QUICK_UPDATE_PRICING", {
       targetType: "PRICING_PLAN",
-      targetLabel: "YEARLY, LIFETIME",
+      targetLabel: "MONTHLY, YEARLY, LIFETIME",
     });
 
     reply.send({
       message: "Đã cập nhật giá thành công",
       updated: {
+        monthly: monthlyUpdate,
         yearly: yearlyUpdate,
         lifetime: lifetimeUpdate,
       },
