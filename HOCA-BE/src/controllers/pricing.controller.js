@@ -159,7 +159,7 @@ const seedPlans = async (req, reply) => {
       {
         name: "HOCA+ Tháng",
         description: "Trọn bộ công cụ học nhóm trong 30 ngày",
-        price: 79000,
+        price: 50000,
         tier: "MONTHLY",
         durationDays: 30,
         isActive: true,
@@ -177,7 +177,7 @@ const seedPlans = async (req, reply) => {
       {
         name: "HOCA+ Năm",
         description: "Học lâu dài, tiết kiệm 37% và không giới hạn phòng",
-        price: 599000,
+        price: 500000,
         tier: "YEARLY",
         durationDays: 365,
         isActive: true,
@@ -193,7 +193,7 @@ const seedPlans = async (req, reply) => {
       {
         name: "HOCA+ Vĩnh viễn",
         description: "Thanh toán một lần, sử dụng HOCA+ trọn đời",
-        price: 1499000,
+        price: 999000,
         tier: "LIFETIME",
         durationDays: -1,
         isActive: true,
