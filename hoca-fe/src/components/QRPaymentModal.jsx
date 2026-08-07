@@ -4,9 +4,23 @@ import { paymentApi } from "../lib/services";
 import { formatVND } from "../lib/format";
 
 export default function QRPaymentModal({ plan, onClose }) {
+  // HOTFIX: Force correct prices to override any cached data
+  const correctedPlan = {
+    ...plan,
+    price:
+      plan.tier === "MONTHLY"
+        ? 50000
+        : plan.tier === "YEARLY"
+          ? 500000
+          : plan.tier === "LIFETIME"
+            ? 999000
+            : plan.price,
+  };
+
   // Debug: log plan received
   console.log("QRPaymentModal received plan:", plan);
   console.log("QRPaymentModal plan price:", plan.price);
+  console.log("QRPaymentModal corrected price:", correctedPlan.price);
 
   // Auto-redirect to PayOS immediately (no method choosing)
   const [error, setError] = useState(null);
@@ -14,7 +28,7 @@ export default function QRPaymentModal({ plan, onClose }) {
   useEffect(() => {
     let active = true;
     paymentApi
-      .createPayment(plan._id)
+      .createPayment(correctedPlan._id)
       .then((d) => {
         if (!active) return;
         if (d?.url) {
@@ -92,9 +106,11 @@ export default function QRPaymentModal({ plan, onClose }) {
                 <h3 className="text-lg font-semibold mb-2">
                   Đang kết nối PayOS...
                 </h3>
-                <p className="text-white/50 text-sm mb-1">{plan.name}</p>
+                <p className="text-white/50 text-sm mb-1">
+                  {correctedPlan.name}
+                </p>
                 <p className="text-xl font-bold gradient-text mb-4">
-                  {formatVND(plan.price)}
+                  {formatVND(correctedPlan.price)}
                 </p>
                 <div className="flex justify-center gap-1">
                   <div className="w-2 h-2 rounded-full bg-primary/60 typing-dot"></div>
