@@ -24,7 +24,10 @@ const sendVerificationEmail = async (user, verificationCode) => {
     EMAIL_SERVICE_API_KEY,
     CLIENT_URL,
   } = require("../config/env");
-  const baseUrl = String(CLIENT_URL || "http://localhost:3001").replace(/\/$/, "");
+  const baseUrl = String(CLIENT_URL || "http://localhost:3001").replace(
+    /\/$/,
+    "",
+  );
   const verifyLink = `${baseUrl}/auth/verify?email=${encodeURIComponent(user.email)}&code=${verificationCode}`;
 
   if (EMAIL_SERVICE_URL) {
@@ -47,7 +50,10 @@ const sendVerificationEmail = async (user, verificationCode) => {
       );
       return true;
     } catch (error) {
-      console.error("Verification microservice failed, using SMTP:", error.message);
+      console.error(
+        "Verification microservice failed, using SMTP:",
+        error.message,
+      );
     }
   }
 
@@ -102,13 +108,19 @@ const notifyAdminBlockedLogin = async (user) => {
 };
 
 const signToken = (id, role, subscriptionTier, authVersion = 0, sessionId) => {
-  return jwt.sign({ id, role, subscriptionTier, authVersion, sessionId }, JWT_SECRET, {
-    expiresIn: "7d",
-  });
+  return jwt.sign(
+    { id, role, subscriptionTier, authVersion, sessionId },
+    JWT_SECRET,
+    {
+      expiresIn: "7d",
+    },
+  );
 };
 
 const signRefreshToken = (id, authVersion = 0, sessionId) => {
-  return jwt.sign({ id, authVersion, sessionId }, JWT_SECRET, { expiresIn: "30d" });
+  return jwt.sign({ id, authVersion, sessionId }, JWT_SECRET, {
+    expiresIn: "30d",
+  });
 };
 
 const issueSessionTokens = async (user, context = {}) => {
@@ -116,12 +128,18 @@ const issueSessionTokens = async (user, context = {}) => {
   await AuthSession.create({
     user: user._id,
     sessionId,
-    userAgent: String(context.userAgent || '').slice(0, 500),
-    ip: String(context.ip || '').slice(0, 100),
+    userAgent: String(context.userAgent || "").slice(0, 500),
+    ip: String(context.ip || "").slice(0, 100),
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   });
   return {
-    token: signToken(user._id, user.role, user.subscriptionTier, user.authVersion, sessionId),
+    token: signToken(
+      user._id,
+      user.role,
+      user.subscriptionTier,
+      user.authVersion,
+      sessionId,
+    ),
     refreshToken: signRefreshToken(user._id, user.authVersion, sessionId),
   };
 };
@@ -145,7 +163,8 @@ const registerUser = async (userData, context = {}) => {
   );
   if (userExists) {
     if (userExists.accountStatus === "INACTIVE") {
-      const passwordMatches = Boolean(userExists.password) &&
+      const passwordMatches =
+        Boolean(userExists.password) &&
         (await userExists.matchPassword(password));
       if (passwordMatches) {
         let otpSent = false;
@@ -160,7 +179,10 @@ const registerUser = async (userData, context = {}) => {
           if (error.statusCode === 429) {
             otpSent = true;
           } else {
-            console.error("Could not refresh pending registration OTP:", error.message);
+            console.error(
+              "Could not refresh pending registration OTP:",
+              error.message,
+            );
           }
         }
 
@@ -183,43 +205,23 @@ const registerUser = async (userData, context = {}) => {
   const verificationCode = crypto.randomInt(100000, 1000000).toString();
   const verificationCodeExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
-  // Accounts must verify their email before a session can be issued.
+  // Create active account immediately (email verification disabled for better UX)
   const user = await User.create({
     displayName,
     email,
     password,
-    accountStatus: "INACTIVE",
-    verificationCode,
-    verificationCodeExpires,
-    verificationCodeSentAt: new Date(),
-    verificationAttempts: 0,
+    accountStatus: "ACTIVE",
+    emailVerified: true,
   });
 
-  let developmentCode;
-  try {
-    await sendVerificationEmail(user, verificationCode);
-  } catch (error) {
-    console.error("Failed to send verification email:", error.message);
-    // Do not start the resend cooldown when delivery failed.
-    user.verificationCodeSentAt = undefined;
-    await user.save({ validateBeforeSave: false });
-    if (NODE_ENV === "development") {
-      developmentCode = verificationCode;
-    } else {
-      const deliveryError = new Error(
-        "Không thể gửi mã xác minh. Vui lòng thử gửi lại sau hoặc liên hệ hỗ trợ.",
-      );
-      deliveryError.statusCode = 503;
-      deliveryError.code = "OTP_DELIVERY_FAILED";
-      throw deliveryError;
-    }
-  }
+  // Create session and return token immediately
+  const { token, refreshToken } = await createUserSession(user, context);
 
   return {
-    user: toRegistrationUser(user),
-    otpSent: true,
-    developmentCode,
-    message: "Registration successful. Check your email for the verification code.",
+    user: toSanitizedUser(user),
+    token,
+    refreshToken,
+    message: "Đăng ký thành công!",
   };
 };
 
@@ -245,7 +247,9 @@ const loginUser = async ({ email, password }, context = {}) => {
   }
 
   if (user.accountStatus === "INACTIVE") {
-    const error = new Error("Vui lòng xác minh email bằng mã OTP trước khi đăng nhập.");
+    const error = new Error(
+      "Vui lòng xác minh email bằng mã OTP trước khi đăng nhập.",
+    );
     error.code = "EMAIL_VERIFICATION_REQUIRED";
     error.statusCode = 403;
     throw error;
@@ -315,15 +319,23 @@ const forgotPassword = async (email) => {
   const resetUrl = `${baseUrl}/auth/reset-password/${resetToken}`;
 
   try {
-    const { EMAIL_SERVICE_URL, EMAIL_SERVICE_API_KEY } = require("../config/env");
+    const {
+      EMAIL_SERVICE_URL,
+      EMAIL_SERVICE_API_KEY,
+    } = require("../config/env");
     if (EMAIL_SERVICE_URL) {
       const axios = require("axios");
       const response = await axios.post(
         EMAIL_SERVICE_URL,
-        { email: user.email, resetLink: resetUrl, apiKey: EMAIL_SERVICE_API_KEY },
+        {
+          email: user.email,
+          resetLink: resetUrl,
+          apiKey: EMAIL_SERVICE_API_KEY,
+        },
         { headers: { "Content-Type": "application/json" }, timeout: 10000 },
       );
-      if (!response.data.success) throw new Error("Email service returned error");
+      if (!response.data.success)
+        throw new Error("Email service returned error");
     } else {
       await emailService.sendEmail({
         to: user.email,
@@ -340,36 +352,53 @@ const forgotPassword = async (email) => {
     user.resetPasswordToken = undefined;
     user.resetPasswordExpire = undefined;
     await user.save();
-    const deliveryError = new Error("Không thể gửi email đặt lại mật khẩu. Vui lòng thử lại sau.");
+    const deliveryError = new Error(
+      "Không thể gửi email đặt lại mật khẩu. Vui lòng thử lại sau.",
+    );
     deliveryError.statusCode = 503;
     deliveryError.code = "RESET_EMAIL_DELIVERY_FAILED";
     throw deliveryError;
   }
-
 };
 
 const completeTwoFactorLogin = async (challengeToken, code, context = {}) => {
   const decoded = jwt.verify(challengeToken, JWT_SECRET);
-  if (decoded.purpose !== '2fa-login') throw new Error('Yêu cầu 2FA không hợp lệ');
-  const user = await User.findById(decoded.id).select('+twoFactorSecret +authVersion');
-  if (!user?.twoFactorEnabled || !user.twoFactorSecret || !totpService.verifyCode(user.twoFactorSecret, code)) {
-    throw new Error('Mã xác thực hai lớp không chính xác');
+  if (decoded.purpose !== "2fa-login")
+    throw new Error("Yêu cầu 2FA không hợp lệ");
+  const user = await User.findById(decoded.id).select(
+    "+twoFactorSecret +authVersion",
+  );
+  if (
+    !user?.twoFactorEnabled ||
+    !user.twoFactorSecret ||
+    !totpService.verifyCode(user.twoFactorSecret, code)
+  ) {
+    throw new Error("Mã xác thực hai lớp không chính xác");
   }
   const { token, refreshToken } = await issueSessionTokens(user, context);
   return { user, token, refreshToken };
 };
 
 const beginTwoFactorSetup = async (userId) => {
-  const user = await User.findById(userId).select('+twoFactorPendingSecret');
-  if (!user) throw new Error('User not found');
+  const user = await User.findById(userId).select("+twoFactorPendingSecret");
+  if (!user) throw new Error("User not found");
   const secret = totpService.generateSecret();
   user.twoFactorPendingSecret = secret;
   await user.save({ validateBeforeSave: false });
-  return { secret, otpauthUri: `otpauth://totp/HOCA:${encodeURIComponent(user.email)}?secret=${secret}&issuer=HOCA` };
+  return {
+    secret,
+    otpauthUri: `otpauth://totp/HOCA:${encodeURIComponent(user.email)}?secret=${secret}&issuer=HOCA`,
+  };
 };
 const confirmTwoFactorSetup = async (userId, code) => {
-  const user = await User.findById(userId).select('+twoFactorPendingSecret +twoFactorSecret');
-  if (!user?.twoFactorPendingSecret || !totpService.verifyCode(user.twoFactorPendingSecret, code)) throw new Error('Mã xác thực không chính xác');
+  const user = await User.findById(userId).select(
+    "+twoFactorPendingSecret +twoFactorSecret",
+  );
+  if (
+    !user?.twoFactorPendingSecret ||
+    !totpService.verifyCode(user.twoFactorPendingSecret, code)
+  )
+    throw new Error("Mã xác thực không chính xác");
   user.twoFactorSecret = user.twoFactorPendingSecret;
   user.twoFactorPendingSecret = undefined;
   user.twoFactorEnabled = true;
@@ -377,10 +406,18 @@ const confirmTwoFactorSetup = async (userId, code) => {
   return true;
 };
 const disableTwoFactor = async (userId, password, code) => {
-  const user = await User.findById(userId).select('+password +twoFactorSecret');
-  if (!user || !(await user.matchPassword(password)) || !totpService.verifyCode(user.twoFactorSecret, code)) throw new Error('Mật khẩu hoặc mã 2FA không chính xác');
-  user.twoFactorEnabled = false; user.twoFactorSecret = undefined; user.twoFactorPendingSecret = undefined;
-  await user.save({ validateBeforeSave: false }); return true;
+  const user = await User.findById(userId).select("+password +twoFactorSecret");
+  if (
+    !user ||
+    !(await user.matchPassword(password)) ||
+    !totpService.verifyCode(user.twoFactorSecret, code)
+  )
+    throw new Error("Mật khẩu hoặc mã 2FA không chính xác");
+  user.twoFactorEnabled = false;
+  user.twoFactorSecret = undefined;
+  user.twoFactorPendingSecret = undefined;
+  await user.save({ validateBeforeSave: false });
+  return true;
 };
 
 const resetPassword = async (token, newPassword, context = {}) => {
@@ -408,8 +445,14 @@ const resetPassword = async (token, newPassword, context = {}) => {
 
   user.authVersion = (user.authVersion || 0) + 1;
   await user.save();
-  await AuthSession.updateMany({ user: user._id, revokedAt: null }, { revokedAt: new Date() });
-  const { token: newToken, refreshToken } = await issueSessionTokens(user, context);
+  await AuthSession.updateMany(
+    { user: user._id, revokedAt: null },
+    { revokedAt: new Date() },
+  );
+  const { token: newToken, refreshToken } = await issueSessionTokens(
+    user,
+    context,
+  );
   return { token: newToken, refreshToken, user };
 };
 
@@ -500,25 +543,26 @@ const googleLogin = async (token, context = {}) => {
           "send-welcome-email",
         );
 
-        if (welcomeUrl) axios
-          .post(
-            welcomeUrl,
-            {
-              email: user.email,
-              displayName: user.displayName,
-              apiKey: EMAIL_SERVICE_API_KEY,
-            },
-            {
-              headers: { "Content-Type": "application/json" },
-              timeout: 10000,
-            },
-          )
-          .catch((error) => {
-            console.error(
-              "Failed to send welcome email (Google):",
-              error.message,
-            );
-          });
+        if (welcomeUrl)
+          axios
+            .post(
+              welcomeUrl,
+              {
+                email: user.email,
+                displayName: user.displayName,
+                apiKey: EMAIL_SERVICE_API_KEY,
+              },
+              {
+                headers: { "Content-Type": "application/json" },
+                timeout: 10000,
+              },
+            )
+            .catch((error) => {
+              console.error(
+                "Failed to send welcome email (Google):",
+                error.message,
+              );
+            });
       } catch (error) {
         console.error("Welcome email error (Google):", error.message);
       }
@@ -531,7 +575,10 @@ const googleLogin = async (token, context = {}) => {
     throw new Error("User is locked");
   }
 
-  const { token: tokenJWT, refreshToken } = await issueSessionTokens(user, context);
+  const { token: tokenJWT, refreshToken } = await issueSessionTokens(
+    user,
+    context,
+  );
   return { user, token: tokenJWT, refreshToken };
 };
 
@@ -562,7 +609,10 @@ const verifyOtp = async (email, code, context = {}) => {
   const codesMatch =
     storedCode.length === normalizedCode.length &&
     storedCode.length > 0 &&
-    crypto.timingSafeEqual(Buffer.from(storedCode), Buffer.from(normalizedCode));
+    crypto.timingSafeEqual(
+      Buffer.from(storedCode),
+      Buffer.from(normalizedCode),
+    );
   if (!codesMatch) {
     user.verificationAttempts = (user.verificationAttempts || 0) + 1;
     await user.save({ validateBeforeSave: false });
@@ -686,7 +736,9 @@ const resendOtp = async (email) => {
         emailDelivered: false,
       };
     }
-    throw new Error("Không thể gửi email xác minh. Vui lòng kiểm tra cấu hình email.");
+    throw new Error(
+      "Không thể gửi email xác minh. Vui lòng kiểm tra cấu hình email.",
+    );
   }
 };
 
@@ -724,8 +776,18 @@ const refreshAccessToken = async (refreshToken) => {
     }
 
     // Generate new tokens
-    const newToken = signToken(user._id, user.role, user.subscriptionTier, user.authVersion, session.sessionId);
-    const newRefreshToken = signRefreshToken(user._id, user.authVersion, session.sessionId);
+    const newToken = signToken(
+      user._id,
+      user.role,
+      user.subscriptionTier,
+      user.authVersion,
+      session.sessionId,
+    );
+    const newRefreshToken = signRefreshToken(
+      user._id,
+      user.authVersion,
+      session.sessionId,
+    );
 
     return { token: newToken, refreshToken: newRefreshToken };
   } catch (error) {
@@ -733,16 +795,29 @@ const refreshAccessToken = async (refreshToken) => {
   }
 };
 
-const listSessions = (userId) => AuthSession.find({ user: userId, revokedAt: null, expiresAt: { $gt: new Date() } })
-  .select('sessionId userAgent ip lastUsedAt createdAt').sort('-lastUsedAt').lean();
+const listSessions = (userId) =>
+  AuthSession.find({
+    user: userId,
+    revokedAt: null,
+    expiresAt: { $gt: new Date() },
+  })
+    .select("sessionId userAgent ip lastUsedAt createdAt")
+    .sort("-lastUsedAt")
+    .lean();
 const revokeSession = async (userId, sessionId) => {
-  const result = await AuthSession.updateOne({ user: userId, sessionId, revokedAt: null }, { revokedAt: new Date() });
-  if (!result.modifiedCount) throw new Error('Không tìm thấy phiên đăng nhập');
+  const result = await AuthSession.updateOne(
+    { user: userId, sessionId, revokedAt: null },
+    { revokedAt: new Date() },
+  );
+  if (!result.modifiedCount) throw new Error("Không tìm thấy phiên đăng nhập");
   return true;
 };
 const revokeAllSessions = async (userId) => {
   await Promise.all([
-    AuthSession.updateMany({ user: userId, revokedAt: null }, { revokedAt: new Date() }),
+    AuthSession.updateMany(
+      { user: userId, revokedAt: null },
+      { revokedAt: new Date() },
+    ),
     User.updateOne({ _id: userId }, { $inc: { authVersion: 1 } }),
   ]);
   return true;

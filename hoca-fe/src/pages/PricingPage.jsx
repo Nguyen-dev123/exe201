@@ -63,9 +63,8 @@ export default function PricingPage() {
       navigate("/login");
       return;
     }
-    const content = getPlanContent(plan.tier);
-    // Merge content but preserve price from API (database source of truth)
-    setQrPlan(content ? { ...plan, ...content, price: plan.price } : plan);
+    // Use plan data directly from API (database is source of truth)
+    setQrPlan(plan);
   };
 
   const currentTier = user?.subscriptionTier || "FREE";
