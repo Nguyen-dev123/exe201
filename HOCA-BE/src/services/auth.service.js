@@ -176,7 +176,7 @@ const registerUser = async (userData, context = {}) => {
   });
 
   // Create session and return token immediately
-  const { token, refreshToken } = await createUserSession(user, context);
+  const { token, refreshToken } = await issueSessionTokens(user, context);
 
   return {
     user: toSanitizedUser(user),
