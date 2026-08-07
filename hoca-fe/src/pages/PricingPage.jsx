@@ -65,6 +65,9 @@ export default function PricingPage() {
       navigate("/login");
       return;
     }
+    // Debug: log plan data
+    console.log("Plan selected:", plan);
+    console.log("Plan price:", plan.price);
     // Use plan data directly from API (database is source of truth)
     setQrPlan(plan);
   };

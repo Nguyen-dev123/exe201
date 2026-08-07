@@ -4,6 +4,10 @@ import { paymentApi } from "../lib/services";
 import { formatVND } from "../lib/format";
 
 export default function QRPaymentModal({ plan, onClose }) {
+  // Debug: log plan received
+  console.log("QRPaymentModal received plan:", plan);
+  console.log("QRPaymentModal plan price:", plan.price);
+
   // Auto-redirect to PayOS immediately (no method choosing)
   const [error, setError] = useState(null);
 
