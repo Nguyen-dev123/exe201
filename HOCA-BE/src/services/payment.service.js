@@ -84,18 +84,18 @@ const assertCanPurchase = async (userId, plan) => {
     error.code = "ACTIVE_PLAN_DUPLICATE";
     throw error;
   }
-  // Only check for pending transactions created in the last 3 minutes
-  // (reduced from 30 minutes to allow quicker retries after PayOS cancellation)
+  // Only check for pending transactions created in the last 10 seconds
+  // (for testing - can be increased to 3 minutes in production)
   const pending = await Transaction.exists({
     user: userId,
     plan: plan._id,
     type: "PREMIUM_SUBSCRIPTION",
     status: "PENDING",
-    createdAt: { $gte: new Date(Date.now() - 3 * 60 * 1000) },
+    createdAt: { $gte: new Date(Date.now() - 10 * 1000) }, // 10 seconds
   });
   if (pending) {
     const error = new Error(
-      "Bạn đã có một giao dịch đang chờ xử lý. Vui lòng đợi 3 phút hoặc hoàn tất thanh toán.",
+      "Bạn đã có một giao dịch đang chờ xử lý. Vui lòng đợi 10 giây hoặc hoàn tất thanh toán.",
     );
     error.code = "PAYMENT_ALREADY_PENDING";
     throw error;
