@@ -158,54 +158,15 @@ const registerUser = async (userData, context = {}) => {
   const email = userData.email.trim().toLowerCase();
 
   // Check if user exists
-  const userExists = await User.findOne({ email }).select(
-    "+password +verificationCodeSentAt",
-  );
+  const userExists = await User.findOne({ email });
   if (userExists) {
-    if (userExists.accountStatus === "INACTIVE") {
-      const passwordMatches =
-        Boolean(userExists.password) &&
-        (await userExists.matchPassword(password));
-      if (passwordMatches) {
-        let otpSent = false;
-        let developmentCode;
-        try {
-          const resendResult = await resendOtp(email);
-          developmentCode = resendResult.developmentCode;
-          otpSent = true;
-        } catch (error) {
-          // A recent code may still be valid. Let the user continue to the OTP
-          // page, where resend remains available once the cooldown expires.
-          if (error.statusCode === 429) {
-            otpSent = true;
-          } else {
-            console.error(
-              "Could not refresh pending registration OTP:",
-              error.message,
-            );
-          }
-        }
-
-        return {
-          user: toRegistrationUser(userExists),
-          otpSent,
-          developmentCode,
-          message: "Registration is waiting for email verification.",
-        };
-      }
-    }
-
     const error = new Error("Email này đã được sử dụng. Vui lòng đăng nhập.");
     error.statusCode = 409;
     error.code = "ACCOUNT_EXISTS";
     throw error;
   }
 
-  // Generate 6-digit OTP
-  const verificationCode = crypto.randomInt(100000, 1000000).toString();
-  const verificationCodeExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-
-  // Create active account immediately (email verification disabled for better UX)
+  // Create active account immediately (no email verification required)
   const user = await User.create({
     displayName,
     email,
