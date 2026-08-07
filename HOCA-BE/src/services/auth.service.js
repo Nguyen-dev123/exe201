@@ -178,8 +178,12 @@ const registerUser = async (userData, context = {}) => {
   // Create session and return token immediately
   const { token, refreshToken } = await issueSessionTokens(user, context);
 
+  // Return user without sensitive fields
+  const userObj = user.toObject();
+  delete userObj.password;
+
   return {
-    user: toSanitizedUser(user),
+    user: userObj,
     token,
     refreshToken,
     message: "Đăng ký thành công!",
