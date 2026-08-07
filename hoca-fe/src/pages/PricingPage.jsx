@@ -50,8 +50,10 @@ export default function PricingPage() {
   const [qrPlan, setQrPlan] = useState(null);
 
   const { data: plans, isLoading } = useQuery({
-    queryKey: ["pricing-plans"],
+    queryKey: ["pricing-plans", Date.now()], // Force fresh fetch
     queryFn: pricingApi.getPlans,
+    staleTime: 0, // Always fetch fresh data
+    cacheTime: 0, // Don't cache
   });
 
   const activePlans = (plans || [])
