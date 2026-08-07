@@ -175,18 +175,13 @@ const registerUser = async (userData, context = {}) => {
     emailVerified: true,
   });
 
-  // Create session and return token immediately
-  const { token, refreshToken } = await issueSessionTokens(user, context);
-
-  // Return user without sensitive fields
+  // Return success without token (user must login separately)
   const userObj = user.toObject();
   delete userObj.password;
 
   return {
     user: userObj,
-    token,
-    refreshToken,
-    message: "Đăng ký thành công!",
+    message: "Đăng ký thành công! Vui lòng đăng nhập.",
   };
 };
 

@@ -41,21 +41,17 @@ export default function RegisterPage() {
         password: data.password,
       });
 
-      const { user, token, refreshToken, requiresVerification, developmentCode } = response.data;
-      if (requiresVerification) {
-        toast.success("Mã OTP đã được gửi tới email của bạn!");
-        navigate(`/verify-otp?email=${encodeURIComponent(data.email.trim())}&sent=1`, {
-          replace: true,
-          state: developmentCode ? { developmentCode } : undefined,
-        });
-        return;
-      }
-      setAuth(user, token, refreshToken);
-      toast.success("Tạo tài khoản thành công!");
-      navigate("/dashboard", { replace: true });
+      // Registration successful - redirect to login page
+      toast.success(
+        response.data.message ||
+          "Tạo tài khoản thành công! Vui lòng đăng nhập.",
+      );
+      navigate("/login", { replace: true });
     } catch (error) {
       if (error.response?.data?.code === "ACCOUNT_EXISTS") {
-        setSubmitError("Email này đã có tài khoản. Vui lòng chuyển sang đăng nhập.");
+        setSubmitError(
+          "Email này đã có tài khoản. Vui lòng chuyển sang đăng nhập.",
+        );
         return;
       }
       setSubmitError(
@@ -120,7 +116,11 @@ export default function RegisterPage() {
             />
           </div>
           {errors.name && (
-            <p id="register-name-error" className="auth-field-error" role="alert">
+            <p
+              id="register-name-error"
+              className="auth-field-error"
+              role="alert"
+            >
               {errors.name.message}
             </p>
           )}
@@ -144,11 +144,17 @@ export default function RegisterPage() {
               autoComplete="email"
               placeholder="ban@hoca.vn"
               aria-invalid={Boolean(errors.email)}
-              aria-describedby={errors.email ? "register-email-error" : undefined}
+              aria-describedby={
+                errors.email ? "register-email-error" : undefined
+              }
             />
           </div>
           {errors.email && (
-            <p id="register-email-error" className="auth-field-error" role="alert">
+            <p
+              id="register-email-error"
+              className="auth-field-error"
+              role="alert"
+            >
               {errors.email.message}
             </p>
           )}
@@ -173,7 +179,9 @@ export default function RegisterPage() {
               onKeyDown={updateCapsLock}
               onKeyUp={updateCapsLock}
               aria-invalid={Boolean(errors.password)}
-              aria-describedby={errors.password ? "register-password-error" : undefined}
+              aria-describedby={
+                errors.password ? "register-password-error" : undefined
+              }
             />
             <button
               type="button"
@@ -186,13 +194,19 @@ export default function RegisterPage() {
             </button>
           </div>
           {errors.password ? (
-            <p id="register-password-error" className="auth-field-error" role="alert">
+            <p
+              id="register-password-error"
+              className="auth-field-error"
+              role="alert"
+            >
               {errors.password.message}
             </p>
           ) : capsLockOn ? (
             <p className="auth-field-note">Caps Lock đang bật.</p>
           ) : (
-            <p className="auth-field-note">Dùng ít nhất 6 ký tự để bảo vệ tài khoản.</p>
+            <p className="auth-field-note">
+              Dùng ít nhất 6 ký tự để bảo vệ tài khoản.
+            </p>
           )}
         </div>
 
@@ -204,7 +218,8 @@ export default function RegisterPage() {
               id="register-confirm-password"
               {...register("confirmPassword", {
                 required: "Vui lòng nhập lại mật khẩu.",
-                validate: (value) => value === password || "Mật khẩu xác nhận chưa khớp.",
+                validate: (value) =>
+                  value === password || "Mật khẩu xác nhận chưa khớp.",
               })}
               type={showConfirmPassword ? "text" : "password"}
               autoComplete="new-password"
@@ -213,32 +228,47 @@ export default function RegisterPage() {
               onKeyUp={updateCapsLock}
               aria-invalid={Boolean(errors.confirmPassword)}
               aria-describedby={
-                errors.confirmPassword ? "register-confirm-password-error" : undefined
+                errors.confirmPassword
+                  ? "register-confirm-password-error"
+                  : undefined
               }
             />
             <button
               type="button"
               className="auth-password-toggle"
               onClick={() => setShowConfirmPassword((current) => !current)}
-              aria-label={showConfirmPassword ? "Ẩn mật khẩu xác nhận" : "Hiện mật khẩu xác nhận"}
+              aria-label={
+                showConfirmPassword
+                  ? "Ẩn mật khẩu xác nhận"
+                  : "Hiện mật khẩu xác nhận"
+              }
               aria-pressed={showConfirmPassword}
             >
               {showConfirmPassword ? <EyeOff size={19} /> : <Eye size={19} />}
             </button>
           </div>
           {errors.confirmPassword && (
-            <p id="register-confirm-password-error" className="auth-field-error" role="alert">
+            <p
+              id="register-confirm-password-error"
+              className="auth-field-error"
+              role="alert"
+            >
               {errors.confirmPassword.message}
             </p>
           )}
         </div>
 
         <button type="submit" disabled={loading} className="auth-submit-button">
-          {loading && <Loader2 className="auth-loading-icon" size={19} aria-hidden="true" />}
+          {loading && (
+            <Loader2
+              className="auth-loading-icon"
+              size={19}
+              aria-hidden="true"
+            />
+          )}
           <span>{loading ? "Đang tạo tài khoản..." : "Tạo tài khoản"}</span>
         </button>
       </form>
-
     </AuthShell>
   );
 }
