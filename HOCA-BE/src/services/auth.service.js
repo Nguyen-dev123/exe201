@@ -207,13 +207,11 @@ const loginUser = async ({ email, password }, context = {}) => {
     throw new Error("Invalid credentials");
   }
 
+  // Auto-activate INACTIVE accounts (legacy from OTP system)
   if (user.accountStatus === "INACTIVE") {
-    const error = new Error(
-      "Vui lòng xác minh email bằng mã OTP trước khi đăng nhập.",
-    );
-    error.code = "EMAIL_VERIFICATION_REQUIRED";
-    error.statusCode = 403;
-    throw error;
+    user.accountStatus = "ACTIVE";
+    user.emailVerified = true;
+    await user.save();
   }
 
   if (user.twoFactorEnabled) {
